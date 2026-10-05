@@ -1,7 +1,4 @@
 <title>ミュート動画保存</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   /* 一列の作業台：上から「選ぶ → トラック確認 → 保存」。トラック表は編集ソフトのタイムライン風 */
   :root {
@@ -17,8 +14,8 @@
     --audio-soft: #f6e4dc;
     --video-soft: #dde8f4;
     --danger: #a3301f;
-    --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
-    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --font-body: "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -150,8 +147,9 @@
   </section>
 
   <ul class="notes">
-    <li>処理はすべてこの端末の中で行います。動画はどこにも送信されません。</li>
-    <li>「保存する」を押すと共有シートが開きます。「ビデオを保存」で写真アプリに入ります。</li>
+    <li>処理はすべてこの端末の中で行います。動画はどこにも送信されません。ページを開いたあと機内モードにしても動きます。</li>
+    <li>読み込み：「動画を選ぶ」→「ファイルを選択」（または「ブラウズ」）で、Documents やファイルアプリの動画を選べます。</li>
+    <li>保存：「保存する」→ 共有シートの「"ファイル"に保存」→ 保存先に Documents を選びます。</li>
     <li>iPhoneで撮ったMOV/MP4に対応しています（分割形式のMP4は未対応）。</li>
   </ul>
 </div>

@@ -1,0 +1,275 @@
+<title>ミュート動画保存</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* 一列の作業台：上から「選ぶ → トラック確認 → 保存」。トラック表は編集ソフトのタイムライン風 */
+  :root {
+    --bg: #eef1f0;
+    --panel: #ffffff;
+    --ink: #17201f;
+    --muted: #5b6866;
+    --line: #d5dcda;
+    --accent: #0f6e66;
+    --accent-ink: #ffffff;
+    --video: #2f6fb0;
+    --audio: #b4532a;
+    --audio-soft: #f6e4dc;
+    --video-soft: #dde8f4;
+    --danger: #a3301f;
+    --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121817; --panel: #1b2322; --ink: #e6ecea; --muted: #9aa8a5; --line: #2d3836;
+      --accent: #3fb5a9; --accent-ink: #0b1514; --video: #79aee3; --audio: #e48a62;
+      --audio-soft: #3a2620; --video-soft: #1e2d3d; --danger: #f08672; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121817; --panel: #1b2322; --ink: #e6ecea; --muted: #9aa8a5; --line: #2d3836;
+    --accent: #3fb5a9; --accent-ink: #0b1514; --video: #79aee3; --audio: #e48a62;
+    --audio-soft: #3a2620; --video-soft: #1e2d3d; --danger: #f08672; color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--font-body);
+    font-size: 16px; line-height: 1.6;
+  }
+  .wrap {
+    max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 40px;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  header h1 { margin: 0; font-size: 1.6rem; font-weight: 700; letter-spacing: 0.02em; text-wrap: balance; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 0.92rem; }
+
+  .pick {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    min-height: 64px; padding: 14px 20px; border-radius: 14px;
+    background: var(--accent); color: var(--accent-ink);
+    font-size: 1.1rem; font-weight: 700; cursor: pointer; text-align: center;
+  }
+  .pick:focus-within { outline: 3px solid var(--video); outline-offset: 3px; }
+  .pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .pick svg { flex: none; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0;
+  }
+  .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .panel-head h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+  .tag {
+    font-size: 0.72rem; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .filename { font-family: var(--font-mono); font-size: 0.82rem; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+
+  .tracks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .track {
+    display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 10px; font-size: 0.92rem;
+  }
+  .track .code { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 500; }
+  .track .lane { height: 14px; border-radius: 4px; min-width: 0; }
+  .track .verdict { font-size: 0.82rem; font-weight: 700; white-space: nowrap; }
+  .track.vide { background: var(--video-soft); }
+  .track.vide .code, .track.vide .verdict { color: var(--video); }
+  .track.vide .lane { background: repeating-linear-gradient(90deg, var(--video) 0 10px, transparent 10px 13px); opacity: 0.75; }
+  .track.soun { background: var(--audio-soft); }
+  .track.soun .code, .track.soun .verdict { color: var(--audio); }
+  .track.soun .lane {
+    background: repeating-linear-gradient(90deg, var(--audio) 0 2px, transparent 2px 5px);
+    opacity: 0.35; position: relative;
+  }
+  .track.soun .lane::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: var(--audio);
+  }
+  .track.other { background: var(--bg); }
+  .track.other .code, .track.other .verdict { color: var(--muted); }
+  .track.other .lane { background: var(--line); }
+
+  .sizes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .size { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .size dt { font-size: 0.78rem; color: var(--muted); letter-spacing: 0.04em; }
+  .size dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+
+  video { width: 100%; max-height: 60vh; border-radius: 10px; background: #000; display: block; }
+
+  .save {
+    appearance: none; border: 0; border-radius: 12px; min-height: 56px; padding: 12px 18px;
+    background: var(--ink); color: var(--bg); font: inherit; font-weight: 700; font-size: 1.05rem; cursor: pointer;
+  }
+  .save:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .save:disabled { opacity: 0.5; cursor: default; }
+
+  .status { margin: 0; font-size: 0.92rem; color: var(--muted); }
+  .status.error { color: var(--danger); font-weight: 500; }
+  .status.ok { color: var(--accent); font-weight: 500; }
+
+  .notes { margin: 0; padding-left: 1.2em; color: var(--muted); font-size: 0.86rem; display: flex; flex-direction: column; gap: 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>ミュート動画保存</h1>
+    <p>動画の音声だけを消して保存し直します。映像は再圧縮しないので画質はそのままです。</p>
+  </header>
+
+  <label class="pick" for="file">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
+    <span id="pick-label">動画を選ぶ</span>
+    <input id="file" type="file" accept="video/mp4,video/quicktime,video/*">
+  </label>
+
+  <section class="panel" aria-labelledby="tracks-title">
+    <div class="panel-head">
+      <h2 id="tracks-title">トラック</h2>
+      <span class="tag" id="tracks-tag">例</span>
+    </div>
+    <div class="filename" id="filename">IMG_0421.MOV（サンプル表示）</div>
+    <ul class="tracks" id="tracks">
+      <li class="track vide"><span class="code">vide</span><span class="lane"></span><span class="verdict">映像・残す</span></li>
+      <li class="track soun"><span class="code">soun</span><span class="lane"></span><span class="verdict">音声・削除</span></li>
+      <li class="track other"><span class="code">meta</span><span class="lane"></span><span class="verdict">情報・残す</span></li>
+    </ul>
+    <dl class="sizes" id="sizes" hidden>
+      <div class="size"><dt>元の動画</dt><dd id="size-before">–</dd></div>
+      <div class="size"><dt>音声なし</dt><dd id="size-after">–</dd></div>
+    </dl>
+    <p class="status" id="status" role="status">動画を選ぶと、ここに実際のトラックが表示されます。</p>
+  </section>
+
+  <section class="panel" id="result" hidden aria-labelledby="result-title">
+    <div class="panel-head"><h2 id="result-title">できあがり</h2></div>
+    <video id="preview" controls playsinline muted></video>
+    <button class="save" id="save" type="button">保存する</button>
+    <p class="status" id="save-status" role="status"></p>
+  </section>
+
+  <ul class="notes">
+    <li>処理はすべてこの端末の中で行います。動画はどこにも送信されません。</li>
+    <li>「保存する」を押すと共有シートが開きます。「ビデオを保存」で写真アプリに入ります。</li>
+    <li>iPhoneで撮ったMOV/MP4に対応しています（分割形式のMP4は未対応）。</li>
+  </ul>
+</div>
+
+<script src="strip-audio.js"></script>
+<script>
+  (function () {
+    var fileInput = document.getElementById('file');
+    var tracksEl = document.getElementById('tracks');
+    var tagEl = document.getElementById('tracks-tag');
+    var nameEl = document.getElementById('filename');
+    var statusEl = document.getElementById('status');
+    var sizesEl = document.getElementById('sizes');
+    var resultEl = document.getElementById('result');
+    var preview = document.getElementById('preview');
+    var saveBtn = document.getElementById('save');
+    var saveStatus = document.getElementById('save-status');
+    var pickLabel = document.getElementById('pick-label');
+
+    var current = null; // { blob, filename }
+    var previewUrl = null;
+    var downloadsPromise = window.claude && window.claude.use ? window.claude.use('downloads') : Promise.resolve(null);
+
+    var LABELS = { vide: '映像', soun: '音声', meta: '情報', mebx: '情報', tmcd: 'タイムコード', text: '字幕', sbtl: '字幕' };
+
+    function mb(bytes) {
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+      return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    function setStatus(el, text, kind) {
+      el.textContent = text;
+      el.className = 'status' + (kind ? ' ' + kind : '');
+    }
+
+    function renderTracks(kept, removed) {
+      tracksEl.textContent = '';
+      var rows = kept.map(function (t) { return { t: t, keep: true }; })
+        .concat(removed.map(function (t) { return { t: t, keep: false }; }))
+        .sort(function (a, b) { return a.t.id - b.t.id; });
+      rows.forEach(function (r) {
+        var li = document.createElement('li');
+        var cls = r.t.kind === 'vide' ? 'vide' : r.t.kind === 'soun' ? 'soun' : 'other';
+        li.className = 'track ' + cls;
+        var code = document.createElement('span'); code.className = 'code'; code.textContent = r.t.kind;
+        var lane = document.createElement('span'); lane.className = 'lane';
+        var verdict = document.createElement('span'); verdict.className = 'verdict';
+        verdict.textContent = (LABELS[r.t.kind] || 'その他') + '・' + (r.keep ? '残す' : '削除');
+        li.append(code, lane, verdict);
+        tracksEl.append(li);
+      });
+    }
+
+    function outputName(name) {
+      var base = name.replace(/\.[^.]+$/, '') || 'video';
+      return base + '_無音.mp4';
+    }
+
+    fileInput.addEventListener('change', async function () {
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      current = null;
+      resultEl.hidden = true;
+      sizesEl.hidden = true;
+      tagEl.textContent = '読み込み中';
+      nameEl.textContent = file.name + '（' + mb(file.size) + '）';
+      setStatus(statusEl, '動画を調べています…');
+      setStatus(saveStatus, '');
+      try {
+        var r = await window.stripAudio(file);
+        tagEl.textContent = 'この動画';
+        renderTracks(r.keptTracks, r.removedTracks);
+        if (!r.blob) {
+          setStatus(statusEl, 'この動画にはもともと音声が入っていません。保存し直す必要はありません。', 'ok');
+          return;
+        }
+        document.getElementById('size-before').textContent = mb(r.originalSize);
+        document.getElementById('size-after').textContent = mb(r.newSize);
+        sizesEl.hidden = false;
+        setStatus(statusEl, '音声トラックを ' + r.removedTracks.length + ' 本取り除きました。', 'ok');
+
+        current = { blob: r.blob, filename: outputName(file.name) };
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(r.blob);
+        preview.src = previewUrl;
+        resultEl.hidden = false;
+        pickLabel.textContent = '別の動画を選ぶ';
+
+        var downloads = await downloadsPromise;
+        saveBtn.disabled = !downloads;
+        if (!downloads) setStatus(saveStatus, 'この画面では保存できません。ClaudeアプリかSafariでこのページを開き直してください。', 'error');
+      } catch (e) {
+        tagEl.textContent = 'エラー';
+        tracksEl.textContent = '';
+        setStatus(statusEl, e && e.userFacing ? e.message : 'この動画は読み込めませんでした。MP4 か MOV の動画を選んでください。', 'error');
+      } finally {
+        fileInput.value = '';
+      }
+    });
+
+    saveBtn.addEventListener('click', async function () {
+      if (!current) return;
+      var downloads = await downloadsPromise;
+      if (!downloads) return;
+      saveBtn.disabled = true;
+      setStatus(saveStatus, '保存の確認を待っています…');
+      try {
+        await downloads.save({ filename: current.filename, data: current.blob });
+        setStatus(saveStatus, '「' + current.filename + '」を保存に回しました。', 'ok');
+      } catch (e) {
+        var code = e && e.code;
+        if (code === 'declined') setStatus(saveStatus, '保存をキャンセルしました。');
+        else if (code === 'rate_limited') setStatus(saveStatus, '確認画面がすでに開いています。少し待ってからもう一度押してください。', 'error');
+        else if (code === 'too_large') setStatus(saveStatus, '動画が大きすぎて保存できませんでした。短い動画で試してください。', 'error');
+        else setStatus(saveStatus, '保存できませんでした（' + (code || '不明なエラー') + '）。', 'error');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+  })();
+</script>

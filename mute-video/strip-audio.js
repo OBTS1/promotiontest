@@ -1,0 +1,335 @@
+// MP4 / MOV から音声トラックを取り除く（再エンコードなし）。
+// 映像データはそのままコピーし、moov を作り直して音声チャンクを mdat から除外する。
+// ファイル全体はメモリに読み込まず、Blob.slice で必要な範囲だけを参照する。
+(function (root) {
+  'use strict';
+
+  var CONTAINERS = { moov: 1, trak: 1, mdia: 1, minf: 1, stbl: 1, edts: 1, dinf: 1, mvex: 1 };
+  var MAX32 = 0xffffffff;
+
+  function fail(message) {
+    var e = new Error(message);
+    e.userFacing = true;
+    throw e;
+  }
+
+  function fourcc(bytes, at) {
+    return String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
+  }
+
+  async function readBytes(blob, start, end) {
+    return new Uint8Array(await blob.slice(start, end).arrayBuffer());
+  }
+
+  // ファイル直下のボックスを、ヘッダだけ読んで列挙する
+  async function scanTopLevel(blob) {
+    var boxes = [];
+    var pos = 0;
+    var total = blob.size;
+    while (pos + 8 <= total) {
+      var h = await readBytes(blob, pos, Math.min(pos + 16, total));
+      var dv = new DataView(h.buffer);
+      var size = dv.getUint32(0);
+      var type = fourcc(h, 4);
+      var header = 8;
+      if (size === 1) {
+        if (h.length < 16) fail('ファイルの末尾が壊れています。');
+        size = dv.getUint32(8) * 4294967296 + dv.getUint32(12);
+        header = 16;
+      } else if (size === 0) {
+        size = total - pos;
+      }
+      if (size < header || pos + size > total) {
+        // 末尾が切れているファイル。mdat 以外なら壊れていると判断する
+        if (type !== 'mdat') fail('ファイルが途中で切れているか、MP4/MOV 形式ではありません。');
+        size = total - pos;
+      }
+      boxes.push({ type: type, start: pos, size: size, header: header });
+      pos += size;
+    }
+    return boxes;
+  }
+
+  // メモリ上のボックス列を木構造に解析する
+  function parseTree(bytes, start, end) {
+    var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var out = [];
+    var pos = start;
+    while (pos + 8 <= end) {
+      var size = dv.getUint32(pos);
+      var type = fourcc(bytes, pos + 4);
+      var header = 8;
+      if (size === 1) {
+        size = dv.getUint32(pos + 8) * 4294967296 + dv.getUint32(pos + 12);
+        header = 16;
+      } else if (size === 0) {
+        size = end - pos;
+      }
+      if (size < header || pos + size > end) fail('動画の情報部分（moov）が壊れています。');
+      var box = { type: type, start: pos, size: size, header: header, bytes: bytes };
+      if (CONTAINERS[type]) box.children = parseTree(bytes, pos + header, pos + size);
+      out.push(box);
+      pos += size;
+    }
+    return out;
+  }
+
+  function child(box, type) {
+    if (!box || !box.children) return null;
+    for (var i = 0; i < box.children.length; i++) if (box.children[i].type === type) return box.children[i];
+    return null;
+  }
+
+  function payload(box) {
+    return new DataView(box.bytes.buffer, box.bytes.byteOffset + box.start + box.header, box.size - box.header);
+  }
+
+  function handlerType(trak) {
+    var hdlr = child(child(trak, 'mdia'), 'hdlr');
+    if (!hdlr) return '????';
+    return fourcc(box8(hdlr), 0);
+  }
+
+  // hdlr: version/flags(4) + pre_defined(4) + handler_type(4)
+  function box8(hdlr) {
+    var off = hdlr.start + hdlr.header + 8;
+    return hdlr.bytes.subarray(off, off + 4);
+  }
+
+  function trackId(trak) {
+    var tkhd = child(trak, 'tkhd');
+    if (!tkhd) return 0;
+    var p = payload(tkhd);
+    return p.getUint8(0) === 1 ? p.getUint32(20) : p.getUint32(12);
+  }
+
+  function sampleSizes(stbl) {
+    var stsz = child(stbl, 'stsz');
+    if (stsz) {
+      var p = payload(stsz);
+      var uniform = p.getUint32(4);
+      var count = p.getUint32(8);
+      if (uniform) return { uniform: uniform, count: count };
+      var sizes = new Array(count);
+      for (var i = 0; i < count; i++) sizes[i] = p.getUint32(12 + i * 4);
+      return { sizes: sizes, count: count };
+    }
+    var stz2 = child(stbl, 'stz2');
+    if (stz2) {
+      var q = payload(stz2);
+      var field = q.getUint8(7);
+      var n = q.getUint32(8);
+      var arr = new Array(n);
+      for (var j = 0; j < n; j++) {
+        if (field === 16) arr[j] = q.getUint16(12 + j * 2);
+        else if (field === 8) arr[j] = q.getUint8(12 + j);
+        else {
+          var b = q.getUint8(12 + (j >> 1));
+          arr[j] = j & 1 ? b & 15 : b >> 4;
+        }
+      }
+      return { sizes: arr, count: n };
+    }
+    fail('サンプルサイズ表（stsz）が見つかりません。');
+  }
+
+  // トラックの全チャンクの (元の位置, サイズ) を求める
+  function chunksOf(trak) {
+    var stbl = child(child(child(trak, 'mdia'), 'minf'), 'stbl');
+    if (!stbl) fail('トラックの情報（stbl）が見つかりません。');
+    var stco = child(stbl, 'stco');
+    var co64 = child(stbl, 'co64');
+    var offsets = [];
+    if (stco) {
+      var p = payload(stco);
+      var n = p.getUint32(4);
+      for (var i = 0; i < n; i++) offsets.push(p.getUint32(8 + i * 4));
+    } else if (co64) {
+      var q = payload(co64);
+      var m = q.getUint32(4);
+      for (var k = 0; k < m; k++) offsets.push(q.getUint32(8 + k * 8) * 4294967296 + q.getUint32(12 + k * 8));
+    } else {
+      fail('チャンク位置表（stco）が見つかりません。');
+    }
+
+    var stsc = child(stbl, 'stsc');
+    var runs = [];
+    if (stsc) {
+      var s = payload(stsc);
+      var e = s.getUint32(4);
+      for (var r = 0; r < e; r++) runs.push({ first: s.getUint32(8 + r * 12), per: s.getUint32(12 + r * 12) });
+    }
+    var ss = sampleSizes(stbl);
+    var sample = 0;
+    var chunks = new Array(offsets.length);
+    for (var c = 0; c < offsets.length; c++) {
+      var per = 0;
+      for (var x = runs.length - 1; x >= 0; x--) {
+        if (runs[x].first <= c + 1) { per = runs[x].per; break; }
+      }
+      var size = 0;
+      if (ss.uniform) {
+        size = ss.uniform * Math.min(per, Math.max(0, ss.count - sample));
+      } else {
+        for (var y = 0; y < per && sample + y < ss.count; y++) size += ss.sizes[sample + y];
+      }
+      sample += per;
+      chunks[c] = { offset: offsets[c], size: size };
+    }
+    return chunks;
+  }
+
+  function concat(parts) {
+    var len = 0;
+    for (var i = 0; i < parts.length; i++) len += parts[i].length;
+    var out = new Uint8Array(len);
+    var pos = 0;
+    for (var j = 0; j < parts.length; j++) { out.set(parts[j], pos); pos += parts[j].length; }
+    return out;
+  }
+
+  function boxHeader(type, bodyLength) {
+    var h = new Uint8Array(8);
+    new DataView(h.buffer).setUint32(0, bodyLength + 8);
+    for (var i = 0; i < 4; i++) h[4 + i] = type.charCodeAt(i);
+    return h;
+  }
+
+  function raw(box) {
+    return box.bytes.subarray(box.start, box.start + box.size);
+  }
+
+  function offsetBox(newOffsets, use64) {
+    var n = newOffsets.length;
+    var body = new Uint8Array(8 + n * (use64 ? 8 : 4));
+    var dv = new DataView(body.buffer);
+    dv.setUint32(4, n);
+    for (var i = 0; i < n; i++) {
+      var v = newOffsets[i];
+      if (use64) {
+        dv.setUint32(8 + i * 8, Math.floor(v / 4294967296));
+        dv.setUint32(12 + i * 8, v % 4294967296);
+      } else {
+        dv.setUint32(8 + i * 4, v);
+      }
+    }
+    return concat([boxHeader(use64 ? 'co64' : 'stco', body.length), body]);
+  }
+
+  // removed: 除外する trak の集合, offsetsFor: trak -> 新しいチャンク位置の配列
+  function serialize(box, removed, offsetsFor, use64, currentTrak) {
+    if (box.type === 'trak') currentTrak = box;
+    if (box.type === 'stco' || box.type === 'co64') return offsetBox(offsetsFor(currentTrak), use64);
+    if (!box.children) return raw(box);
+    var parts = [];
+    for (var i = 0; i < box.children.length; i++) {
+      var c = box.children[i];
+      if (removed.indexOf(c) !== -1) continue;
+      if (c.type === 'trex' && removedIds(removed).indexOf(trexTrackId(c)) !== -1) continue;
+      parts.push(serialize(c, removed, offsetsFor, use64, currentTrak));
+    }
+    var body = concat(parts);
+    return concat([boxHeader(box.type, body.length), body]);
+  }
+
+  function removedIds(removed) {
+    return removed.map(trackId);
+  }
+
+  function trexTrackId(trex) {
+    return payload(trex).getUint32(4);
+  }
+
+  /**
+   * file: File または Blob（MP4 / MOV）
+   * 戻り値: { blob, removedTracks, keptTracks, originalSize, newSize }
+   */
+  async function stripAudio(file) {
+    var top = await scanTopLevel(file);
+    var moovInfo = null;
+    var ftypInfo = null;
+    for (var i = 0; i < top.length; i++) {
+      if (top[i].type === 'moov') moovInfo = top[i];
+      if (top[i].type === 'ftyp' && !ftypInfo) ftypInfo = top[i];
+      if (top[i].type === 'moof') fail('分割形式（fragmented MP4）の動画にはまだ対応していません。');
+    }
+    if (!moovInfo) fail('MP4/MOV の動画として読み込めませんでした（moov が見つかりません）。');
+
+    var moovBytes = await readBytes(file, moovInfo.start, moovInfo.start + moovInfo.size);
+    var moov = parseTree(moovBytes, 0, moovBytes.length)[0];
+    var ftyp = ftypInfo ? await readBytes(file, ftypInfo.start, ftypInfo.start + ftypInfo.size) : new Uint8Array(0);
+
+    var traks = moov.children.filter(function (b) { return b.type === 'trak'; });
+    var removed = traks.filter(function (t) { return handlerType(t) === 'soun'; });
+    var kept = traks.filter(function (t) { return removed.indexOf(t) === -1; });
+    var describe = function (t) { return { id: trackId(t), kind: handlerType(t) }; };
+
+    if (!removed.length) {
+      return { blob: null, removedTracks: [], keptTracks: kept.map(describe), originalSize: file.size, newSize: file.size };
+    }
+    if (!kept.some(function (t) { return handlerType(t) === 'vide'; })) fail('映像トラックが見つかりません。');
+
+    // 残すトラックのチャンクを元の並び順（映像とメタデータの交互配置）のまま新しい mdat に詰める
+    var all = [];
+    kept.forEach(function (t) {
+      chunksOf(t).forEach(function (c, idx) { all.push({ trak: t, idx: idx, offset: c.offset, size: c.size }); });
+    });
+    all.sort(function (a, b) { return a.offset - b.offset; });
+
+    var rel = new Map();
+    kept.forEach(function (t) { rel.set(t, []); });
+    var ranges = [];
+    var cursor = 0;
+    var seen = new Map(); // 同じ位置を共有するチャンクは一度だけコピーする
+    all.forEach(function (c) {
+      var key = c.offset + ':' + c.size;
+      if (seen.has(key)) { rel.get(c.trak)[c.idx] = seen.get(key); return; }
+      if (c.offset + c.size > file.size) fail('動画データが途中で切れています。');
+      seen.set(key, cursor);
+      rel.get(c.trak)[c.idx] = cursor;
+      var last = ranges[ranges.length - 1];
+      if (last && last.end === c.offset) last.end += c.size;
+      else ranges.push({ start: c.offset, end: c.offset + c.size });
+      cursor += c.size;
+    });
+    var mdatPayload = cursor;
+
+    var bigMdat = mdatPayload + 8 > MAX32;
+    var mdatHeaderSize = bigMdat ? 16 : 8;
+    // moov のサイズは位置の値には依存しないので、先に大きさを確定させる
+    var use64 = ftyp.length + moovInfo.size + mdatHeaderSize + mdatPayload + 1048576 > MAX32;
+    var sized = serialize(moov, removed, function (t) { return rel.get(t); }, use64, null);
+    var base = ftyp.length + sized.length + mdatHeaderSize;
+    var newMoov = serialize(moov, removed, function (t) {
+      return rel.get(t).map(function (v) { return v + base; });
+    }, use64, null);
+
+    var mdatHeader = new Uint8Array(mdatHeaderSize);
+    var mh = new DataView(mdatHeader.buffer);
+    if (bigMdat) {
+      mh.setUint32(0, 1);
+      mdatHeader.set([109, 100, 97, 116], 4);
+      var total = mdatPayload + 16;
+      mh.setUint32(8, Math.floor(total / 4294967296));
+      mh.setUint32(12, total % 4294967296);
+    } else {
+      mh.setUint32(0, mdatPayload + 8);
+      mdatHeader.set([109, 100, 97, 116], 4);
+    }
+
+    var parts = [ftyp, newMoov, mdatHeader];
+    ranges.forEach(function (r) { parts.push(file.slice(r.start, r.end)); });
+    var blob = new Blob(parts, { type: 'video/mp4' });
+
+    return {
+      blob: blob,
+      removedTracks: removed.map(describe),
+      keptTracks: kept.map(describe),
+      originalSize: file.size,
+      newSize: blob.size
+    };
+  }
+
+  root.stripAudio = stripAudio;
+  if (typeof module !== 'undefined' && module.exports) module.exports = { stripAudio: stripAudio };
+})(typeof globalThis !== 'undefined' ? globalThis : this);

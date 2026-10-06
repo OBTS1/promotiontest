@@ -596,15 +596,32 @@
       }
     });
 
+    // Claude の外（Safari・ホーム画面のアプリ）では共有シートで保存する。使えなければ通常のダウンロード
+    async function saveOutside(blob, name, href) {
+      try {
+        var f = new File([blob], name, { type: 'video/mp4' });
+        if (navigator.canShare && navigator.canShare({ files: [f] })) {
+          await navigator.share({ files: [f] });
+          return 'shared';
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return 'cancelled';
+      }
+      var a = document.createElement('a');
+      a.href = href; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      return 'downloaded';
+    }
+
     $('save').addEventListener('click', async function () {
       if (!result) return;
       var st = $('save-status');
       var downloads = await downloadsReady;
       if (!downloads) {
-        var a = document.createElement('a');
-        a.href = result.url; a.download = result.name;
-        document.body.appendChild(a); a.click(); a.remove();
-        say(st, '「' + result.name + '」を保存しました。', 'ok');
+        var how = await saveOutside(result.blob, result.name, result.url);
+        if (how === 'shared') say(st, '共有シートから保存しました。', 'ok');
+        else if (how === 'cancelled') say(st, '保存をキャンセルしました。');
+        else say(st, '「' + result.name + '」を保存しました。ファイルアプリの「ダウンロード」を確認してください。', 'ok');
         return;
       }
       var btn = $('save');

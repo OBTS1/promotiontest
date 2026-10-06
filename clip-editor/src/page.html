@@ -109,6 +109,12 @@
   .status.error { color: var(--danger); font-weight: 500; }
   .status.ok { color: var(--ok); font-weight: 500; }
   .foot { margin: 0; color: var(--muted); font-size: 0.82rem; }
+
+  .stage { position: relative; width: 100%; max-height: 62vh; margin: 0 auto; background: #000; border-radius: 10px; overflow: hidden; }
+  .stage video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; object-fit: contain; border-radius: 0; }
+  .pv-bar { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+  .pv-bar button { min-width: 64px; }
+  .pv-time { font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
 </style>
 
 <div class="wrap">
@@ -159,6 +165,23 @@
     <p class="status" id="add-status" role="status"></p>
   </section>
 
+  <section class="panel" id="preview" hidden aria-labelledby="preview-title">
+    <div class="row spread">
+      <h2 id="preview-title">仕上がりプレビュー</h2>
+      <span class="hint" id="pv-clip"></span>
+    </div>
+    <div class="stage" id="pv-stage">
+      <video id="pv-a" playsinline preload="auto"></video>
+      <video id="pv-b" playsinline preload="auto" hidden></video>
+    </div>
+    <div class="pv-bar">
+      <button type="button" id="pv-play" class="primary">再生</button>
+      <input id="pv-seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="プレビューの再生位置">
+      <span class="pv-time tc" id="pv-time">00:00.00 / 00:00.00</span>
+    </div>
+    <p class="hint">書き出さずに、今の並び・カットのまま通して再生します。</p>
+  </section>
+
   <section class="panel" aria-labelledby="export-title">
     <h2 id="export-title">書き出し</h2>
     <label class="check" for="mute"><input id="mute" type="checkbox"> 音声を消す</label>
@@ -205,7 +228,118 @@
       $('result').hidden = true;
       $('export').disabled = !segs.length;
       say($('export-status'), segs.length ? '準備ができたら「書き出す」を押してください。' : 'クリップを追加すると書き出せます。');
+      resetPreview();
     }
+
+    // ---------- 仕上がりプレビュー（書き出さずに区間を順に再生） ----------
+    var pv = { a: $('pv-a'), b: $('pv-b'), idx: 0, playing: false, unlocked: false, raf: 0 };
+    pv.active = pv.a; pv.standby = pv.b;
+
+    function pvStarts() {
+      var acc = 0;
+      return segs.map(function (s) { var st = acc; acc += Math.max(0, s.end - s.start); return st; }).concat([acc]);
+    }
+
+    function pvLoad(v, s, t) {
+      if (v.getAttribute('src') !== s.clip.url) v.src = s.clip.url;
+      v.muted = $('mute').checked;
+      var set = function () { try { v.currentTime = t; } catch (e) { /* 読み込み後に再設定 */ } };
+      if (v.readyState >= 1) set(); else v.addEventListener('loadedmetadata', set, { once: true });
+    }
+
+    function pvShow(i, local) {
+      pv.idx = i;
+      var s = segs[i];
+      pvLoad(pv.active, s, s.start + local);
+      pv.active.hidden = false;
+      pv.standby.hidden = true;
+      pv.standby.pause();
+      if (segs[i + 1]) pvLoad(pv.standby, segs[i + 1], segs[i + 1].start);
+      $('pv-clip').textContent = (i + 1) + ' / ' + segs.length + ' 本目';
+    }
+
+    function pvUpdate() {
+      var st = pvStarts();
+      var s = segs[pv.idx];
+      var g = s ? st[pv.idx] + Math.max(0, pv.active.currentTime - s.start) : 0;
+      $('pv-seek').max = st[segs.length].toFixed(2);
+      $('pv-seek').value = Math.min(g, st[segs.length]);
+      $('pv-time').textContent = tc(g) + ' / ' + tc(st[segs.length]);
+    }
+
+    function pvTick() {
+      if (!pv.playing) return;
+      var s = segs[pv.idx];
+      if (s && (pv.active.currentTime >= s.end - 0.03 || pv.active.ended)) {
+        if (pv.idx + 1 < segs.length) {
+          pv.active.pause();
+          var old = pv.active;
+          pv.active = pv.standby; pv.standby = old;
+          pv.idx++;
+          pv.active.hidden = false;
+          old.hidden = true;
+          var p = pv.active.play(); if (p && p.catch) p.catch(function () {});
+          if (segs[pv.idx + 1]) pvLoad(pv.standby, segs[pv.idx + 1], segs[pv.idx + 1].start);
+          $('pv-clip').textContent = (pv.idx + 1) + ' / ' + segs.length + ' 本目';
+        } else {
+          pvPause();
+          pvUpdate();
+          return;
+        }
+      }
+      pvUpdate();
+      pv.raf = requestAnimationFrame(pvTick);
+    }
+
+    function pvPlay() {
+      if (!segs.length) return;
+      player.pause();
+      // iPhone では、タップの中で一度再生した動画要素だけが後から自動で再生できる
+      if (!pv.unlocked) {
+        pv.unlocked = true;
+        var q = pv.standby.play(); if (q && q.then) q.then(function () { pv.standby.pause(); }).catch(function () {});
+      }
+      var st = pvStarts();
+      if (+$('pv-seek').value >= st[segs.length] - 0.05) pvSeek(0);
+      pv.playing = true;
+      $('pv-play').textContent = '一時停止';
+      var p = pv.active.play(); if (p && p.catch) p.catch(function () {});
+      cancelAnimationFrame(pv.raf);
+      pv.raf = requestAnimationFrame(pvTick);
+    }
+
+    function pvPause() {
+      pv.playing = false;
+      pv.active.pause();
+      $('pv-play').textContent = '再生';
+      cancelAnimationFrame(pv.raf);
+    }
+
+    function pvSeek(g) {
+      var st = pvStarts();
+      var i = 0;
+      while (i + 1 < segs.length && g >= st[i + 1]) i++;
+      pvShow(i, Math.max(0, g - st[i]));
+      if (pv.playing) { var p = pv.active.play(); if (p && p.catch) p.catch(function () {}); }
+      pvUpdate();
+    }
+
+    function resetPreview() {
+      pvPause();
+      $('preview').hidden = !segs.length;
+      if (!segs.length) return;
+      // 縦横が混ざるときは書き出しと同じ縦長の枠、そうでなければ 1 本目の比率
+      var mixed = E.incompatibility(segs.map(function (s) { return { clip: s.clip }; }));
+      var ds = E.displaySize(segs[0].clip);
+      $('pv-stage').style.aspectRatio = mixed ? '9 / 16' : ds.w + ' / ' + ds.h;
+      $('pv-stage').style.maxWidth = 'calc(62vh * ' + (mixed ? 9 / 16 : ds.w / ds.h) + ')';
+      pvShow(0, 0);
+      pvUpdate();
+    }
+
+    $('pv-play').addEventListener('click', function () { if (pv.playing) pvPause(); else pvPlay(); });
+    $('pv-seek').addEventListener('input', function () { pvSeek(+$('pv-seek').value); });
+    player.addEventListener('play', function () { if (pv.playing) pvPause(); });
 
     // ---------- タイムライン ----------
     function renderTimeline() {

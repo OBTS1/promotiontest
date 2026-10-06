@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="高画質化">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
+</head>
+<body>
+<title>写真の高画質化</title>
+<style>
+  /* 縦一列：低解像度の写真 → 参考写真 → 方法 → 結果。比べるスライダーで前後を確かめて保存する */
+  :root {
+    --bg: #f1eff4; --panel: #ffffff; --ink: #1b1824; --muted: #625d70; --line: #dad5e2;
+    --accent: #6a3fc1; --accent-ink: #ffffff; --soft: #ece5fa; --danger: #b0312a; --ok: #23784a;
+    --font-body: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131119; --panel: #1c1924; --ink: #ebe8f1; --muted: #a29cb2; --line: #312c3d;
+      --accent: #a687f0; --accent-ink: #15111e; --soft: #2a2338; --danger: #f08a80; --ok: #74d39c; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131119; --panel: #1c1924; --ink: #ebe8f1; --muted: #a29cb2; --line: #312c3d;
+    --accent: #a687f0; --accent-ink: #15111e; --soft: #2a2338; --danger: #f08a80; --ok: #74d39c; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.6; }
+  .wrap { max-width: 520px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 48px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 1.5rem; text-wrap: balance; }
+  h2 { margin: 0; font-size: 1.02rem; }
+  .lead { margin: 4px 0 0; color: var(--muted); font-size: 0.92rem; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px; }
+  .tag { font-size: 0.78rem; color: var(--muted); }
+  .pick { position: relative; display: flex; align-items: center; justify-content: center; min-height: 52px; padding: 10px 16px; border-radius: 12px; border: 2px dashed var(--line); color: var(--accent); font-weight: 700; cursor: pointer; }
+  .pick:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .pick input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .thumb { position: relative; width: 96px; flex: none; }
+  .thumb img { display: block; width: 96px; height: 96px; object-fit: cover; border-radius: 10px; background: var(--soft); }
+  .thumb .px { display: block; font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
+  .thumb button { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 16px; line-height: 28px; padding: 0; cursor: pointer; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .seg label { display: flex; flex-direction: column; gap: 2px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; min-width: 0; }
+  .seg label:has(input:checked) { border-color: var(--accent); background: var(--soft); }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg label:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .seg b { font-size: 0.95rem; }
+  .seg span { font-size: 0.78rem; color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  .row > label { font-size: 0.88rem; color: var(--muted); }
+  select, input[type="text"], input[type="password"], textarea { font: inherit; font-size: 16px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+  textarea { width: 100%; resize: vertical; min-height: 64px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { font-size: 0.88rem; color: var(--muted); }
+  .chips { display: flex; gap: 6px; }
+  .chips label { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-family: var(--font-mono); font-size: 0.9rem; }
+  .chips label:has(input:checked) { border-color: var(--accent); background: var(--soft); color: var(--accent); font-weight: 700; }
+  .chips input { position: absolute; opacity: 0; pointer-events: none; }
+  details { border-top: 1px solid var(--line); padding-top: 10px; }
+  summary { cursor: pointer; font-size: 0.9rem; color: var(--accent); font-weight: 600; }
+  details .field { margin-top: 10px; }
+  .note { margin: 0; font-size: 0.82rem; color: var(--muted); }
+  .note a { color: var(--accent); }
+  .go { appearance: none; border: 0; border-radius: 12px; min-height: 56px; padding: 12px 18px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 700; font-size: 1.08rem; cursor: pointer; }
+  .go:disabled { opacity: 0.45; cursor: default; }
+  .go:focus-visible, .save:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  .save { appearance: none; border: 0; border-radius: 12px; min-height: 52px; padding: 12px 18px; background: var(--ink); color: var(--bg); font: inherit; font-weight: 700; font-size: 1.02rem; cursor: pointer; }
+  .save:disabled { opacity: 0.5; }
+  .status { margin: 0; font-size: 0.92rem; color: var(--muted); overflow-wrap: anywhere; }
+  .status.error { color: var(--danger); font-weight: 500; }
+  .status.ok { color: var(--ok); font-weight: 500; }
+  progress { width: 100%; height: 8px; accent-color: var(--accent); }
+  .compare { position: relative; border-radius: 10px; overflow: hidden; background: var(--soft); touch-action: pan-y; }
+  .compare img { display: block; width: 100%; height: auto; }
+  .compare .before { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; clip-path: inset(0 calc(100% - var(--cut, 50%)) 0 0); }
+  .compare .bar { position: absolute; top: 0; bottom: 0; left: var(--cut, 50%); width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35); pointer-events: none; }
+  .compare .lbl { position: absolute; top: 8px; padding: 2px 8px; border-radius: 6px; background: rgba(0,0,0,.6); color: #fff; font-size: 0.74rem; pointer-events: none; }
+  .compare .lbl.l { left: 8px; } .compare .lbl.r { right: 8px; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .facts { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .facts div { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+  .facts dt { font-size: 0.74rem; color: var(--muted); }
+  .facts dd { margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.98rem; }
+  .foot { margin: 0; color: var(--muted); font-size: 0.82rem; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>写真の高画質化</h1>
+    <p class="lead">解像度の低い写真を大きく、くっきりさせます。同じ人の高解像度の写真を参考にすると、顔立ちをより正しく復元できます。</p>
+  </header>
+
+  <section class="panel" aria-labelledby="h-low">
+    <div class="head"><h2 id="h-low">1. 高画質にしたい写真</h2><span class="tag">1 枚</span></div>
+    <div class="thumbs" id="low-thumbs"></div>
+    <label class="pick" for="low-file"><span id="low-label">写真を選ぶ</span><input id="low-file" type="file" accept="image/*"></label>
+  </section>
+
+  <section class="panel" aria-labelledby="h-ref">
+    <div class="head"><h2 id="h-ref">2. 参考にする写真（同じ人）</h2><span class="tag">最大 3 枚・AI 復元で使用</span></div>
+    <div class="thumbs" id="ref-thumbs"></div>
+    <label class="pick" for="ref-file"><span>参考写真を追加</span><input id="ref-file" type="file" accept="image/*" multiple></label>
+    <p class="note">顔がはっきり写った、なるべく正面に近い写真が向いています。</p>
+  </section>
+
+  <section class="panel" aria-labelledby="h-way">
+    <h2 id="h-way">3. 方法</h2>
+    <div class="seg" role="radiogroup" aria-labelledby="h-way">
+      <label><input type="radio" name="way" id="way-ai" value="ai" checked><b>AI で復元</b><span>参考写真を使う・ネットが必要</span></label>
+      <label><input type="radio" name="way" id="way-local" value="local"><b>この端末で拡大</b><span>参考写真は使わない・オフライン可</span></label>
+    </div>
+
+    <div id="opt-ai" class="panel" style="padding:0;border:0;gap:12px">
+      <div class="row">
+        <label for="ai-size">仕上がり</label>
+        <select id="ai-size"><option value="2K">2K（長辺 約2000px）</option><option value="4K">4K（長辺 約4000px）</option></select>
+      </div>
+      <div class="field">
+        <label for="ai-note">AI へのひとこと（任意）</label>
+        <textarea id="ai-note" placeholder="例：メガネはそのまま。肌は自然な感じで"></textarea>
+      </div>
+      <details id="ai-settings">
+        <summary>Gemini の設定</summary>
+        <div class="field">
+          <label for="ai-key">API キー（この端末にだけ保存）</label>
+          <input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
+        </div>
+        <div class="field">
+          <label for="ai-model">モデル</label>
+          <select id="ai-model">
+            <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image（高品質）</option>
+            <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image（速い・安い）</option>
+          </select>
+        </div>
+        <p class="note" style="margin-top:8px">キーは <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で作れます。画像の生成は有料（1 枚あたり数十円程度）です。</p>
+      </details>
+      <p class="note">高画質にしたい写真と参考写真を Google の Gemini に送って処理します。AI は細部を描き足すため、本人と細かな違いが出ることがあります。</p>
+    </div>
+
+    <div id="opt-local" class="panel" style="padding:0;border:0;gap:12px" hidden>
+      <div class="row">
+        <label>倍率</label>
+        <div class="chips" role="radiogroup" aria-label="倍率">
+          <label><input type="radio" name="scale" id="scale-2" value="2">2×</label>
+          <label><input type="radio" name="scale" id="scale-4" value="4" checked>4×</label>
+        </div>
+      </div>
+      <p class="note">この端末の中の AI（ESRGAN）で拡大します。写真はどこにも送りません。参考写真は使いません。</p>
+    </div>
+
+    <button class="go" id="go" type="button" disabled>高画質にする</button>
+    <progress id="prog" max="1" value="0" hidden></progress>
+    <p class="status" id="status" role="status">まず 1 の写真を選んでください。</p>
+  </section>
+
+  <section class="panel" id="result" aria-labelledby="h-res" hidden>
+    <h2 id="h-res">結果</h2>
+    <div class="compare" id="compare">
+      <img id="after-img" alt="高画質にした写真">
+      <img id="before-img" class="before" alt="元の写真">
+      <span class="bar"></span>
+      <span class="lbl l">元</span><span class="lbl r">高画質</span>
+    </div>
+    <input type="range" id="cut" min="0" max="100" value="50" aria-label="元の写真と比べる位置">
+    <dl class="facts">
+      <div><dt>元の写真</dt><dd id="px-before">–</dd></div>
+      <div><dt>高画質</dt><dd id="px-after">–</dd></div>
+    </dl>
+    <button class="save" id="save" type="button">写真を保存</button>
+  </section>
+
+  <p class="foot">「この端末で拡大」は、すべてこの iPhone の中で処理します。「AI で復元」を選んだときだけ、写真を Google に送ります。</p>
+</div>
+
+<script src="vendor/tf.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var statusEl = $('status'), prog = $('prog'), goBtn = $('go');
+  var low = null;          // { file, img, w, h, url }
+  var refs = [];           // 同上
+  var result = null;       // { blob, name, url, w, h }
+  var busy = false;
+  var downloadsReady = window.claude && window.claude.use ? window.claude.use('downloads') : Promise.resolve(null);
+
+  function say(text, kind) { statusEl.textContent = text; statusEl.className = 'status' + (kind ? ' ' + kind : ''); }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  function way() { return $('way-ai').checked ? 'ai' : 'local'; }
+
+  // 設定は端末内に覚えておく
+  $('ai-key').value = store('pu.key') || '';
+  if (store('pu.model')) $('ai-model').value = store('pu.model');
+  if (store('pu.size')) $('ai-size').value = store('pu.size');
+  if (!$('ai-key').value) $('ai-settings').open = true;
+  $('ai-key').addEventListener('change', function () { store('pu.key', $('ai-key').value.trim()); });
+  $('ai-model').addEventListener('change', function () { store('pu.model', $('ai-model').value); });
+  $('ai-size').addEventListener('change', function () { store('pu.size', $('ai-size').value); });
+
+  function loadImage(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () { resolve({ file: file, img: img, w: img.naturalWidth, h: img.naturalHeight, url: url }); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('この写真は読み込めませんでした。JPEG・PNG・HEIC の写真を選んでください。')); };
+      img.src = url;
+    });
+  }
+
+  function thumb(item, onRemove) {
+    var d = document.createElement('div'); d.className = 'thumb';
+    var im = document.createElement('img'); im.src = item.url; im.alt = '';
+    var px = document.createElement('span'); px.className = 'px'; px.textContent = item.w + '×' + item.h;
+    d.append(im, px);
+    if (onRemove) {
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = '×'; b.setAttribute('aria-label', 'この写真を外す');
+      b.addEventListener('click', onRemove); d.append(b);
+    }
+    return d;
+  }
+
+  function render() {
+    var lt = $('low-thumbs'); lt.textContent = '';
+    if (low) lt.append(thumb(low));
+    $('low-label').textContent = low ? '別の写真を選ぶ' : '写真を選ぶ';
+    var rt = $('ref-thumbs'); rt.textContent = '';
+    refs.forEach(function (r, i) {
+      rt.append(thumb(r, function () { URL.revokeObjectURL(r.url); refs.splice(i, 1); render(); }));
+    });
+    $('opt-ai').hidden = way() !== 'ai';
+    $('opt-local').hidden = way() !== 'local';
+    goBtn.disabled = busy || !low;
+    if (!busy) {
+      if (!low) say('まず 1 の写真を選んでください。');
+      else if (way() === 'ai' && !refs.length) say('参考写真なしでも AI 復元できますが、2 で同じ人の写真を足すと顔立ちが正確になります。');
+      else say('準備ができました。「高画質にする」を押してください。');
+    }
+  }
+
+  $('low-file').addEventListener('change', async function (e) {
+    var f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try { var it = await loadImage(f); if (low) URL.revokeObjectURL(low.url); low = it; render(); }
+    catch (err) { say(err.message, 'error'); }
+  });
+  $('ref-file').addEventListener('change', async function (e) {
+    var fs = Array.prototype.slice.call(e.target.files || []); e.target.value = '';
+    for (var i = 0; i < fs.length && refs.length < 3; i++) {
+      try { refs.push(await loadImage(fs[i])); } catch (err) { say(err.message, 'error'); }
+    }
+    if (fs.length && refs.length >= 3) say('参考写真は 3 枚までです。');
+    render();
+  });
+  document.querySelectorAll('input[name="way"]').forEach(function (r) { r.addEventListener('change', render); });
+
+  function canvasOf(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+  function toBlob(c, type, q) { return new Promise(function (res, rej) { c.toBlob(function (b) { b ? res(b) : rej(new Error('画像を作れませんでした（大きすぎる可能性があります）。')); }, type, q); }); }
+
+  // 長辺を max 以下に縮めた JPEG/PNG の base64 を作る（送る量を抑える）
+  async function encode(item, max, type) {
+    var k = Math.min(1, max / Math.max(item.w, item.h));
+    var w = Math.round(item.w * k), h = Math.round(item.h * k);
+    var c = canvasOf(w, h), g = c.getContext('2d');
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(item.img, 0, 0, w, h);
+    var blob = await toBlob(c, type, 0.92);
+    var buf = new Uint8Array(await blob.arrayBuffer()), s = '';
+    for (var i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return { mime: type, data: btoa(s) };
+  }
+
+  var RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
+  function nearestRatio(w, h) {
+    var best = RATIOS[0], d = Infinity, r = Math.log(w / h);
+    RATIOS.forEach(function (s) { var p = s.split(':'); var e = Math.abs(Math.log(p[0] / p[1]) - r); if (e < d) { d = e; best = s; } });
+    return best;
+  }
+
+  async function runAI() {
+    var key = $('ai-key').value.trim();
+    if (!key) { $('ai-settings').open = true; $('ai-key').focus(); throw userError('Gemini の API キーを入れてください（「Gemini の設定」）。'); }
+    store('pu.key', key);
+    var model = $('ai-model').value, size = $('ai-size').value;
+    say('写真を準備しています…'); prog.removeAttribute('value');
+    var parts = [];
+    var intro = 'You are a professional photo restoration tool. The FIRST image is a low-resolution photo of a person that must be restored. ' +
+      (refs.length ? 'The following ' + refs.length + ' image(s) are high-resolution reference photos of the SAME person, taken at other times. ' : '') +
+      'Produce a sharp, high-resolution, photorealistic version of the FIRST image. ' +
+      'Keep exactly the same composition, framing, pose, head angle, facial expression, hairstyle, clothing, accessories, background, lighting and colors as the FIRST image. Do not add, remove, move or restyle anything. ' +
+      (refs.length ? 'Use the reference photos only to recover this person\'s true facial features and fine details (eyes, eyelids, eyebrows, nose, lips, teeth, skin texture, moles, hair strands) so the identity matches the references exactly. Do not copy pose, expression, makeup, lighting or background from the references. ' : '') +
+      'Natural skin texture, no beautification, no smoothing, no artistic filter. Output only the restored image.';
+    var note = $('ai-note').value.trim();
+    parts.push({ text: intro + (note ? '\nAdditional request from the user (Japanese): ' + note : '') });
+    parts.push({ text: 'FIRST image (to restore):' });
+    var l = await encode(low, 2048, 'image/png');
+    parts.push({ inline_data: { mime_type: l.mime, data: l.data } });
+    for (var i = 0; i < refs.length; i++) {
+      var r = await encode(refs[i], 2048, 'image/jpeg');
+      parts.push({ text: 'Reference photo ' + (i + 1) + ' (same person):' });
+      parts.push({ inline_data: { mime_type: r.mime, data: r.data } });
+    }
+    var body = {
+      contents: [{ role: 'user', parts: parts }],
+      generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: nearestRatio(low.w, low.h), imageSize: size } }
+    };
+    say('Gemini で復元しています…（30 秒〜1 分ほど）');
+    var res;
+    try {
+      res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body)
+      });
+    } catch (e) {
+      throw userError('Gemini につながりませんでした。ネット接続を確かめてください。Claude の画面の中では外部の AI につなげないため、Safari かホーム画面のアプリで開いてください。');
+    }
+    var json = await res.json().catch(function () { return null; });
+    if (!res.ok) {
+      var msg = json && json.error && json.error.message || ('HTTP ' + res.status);
+      if (res.status === 400 && /API key/i.test(msg)) throw userError('API キーが正しくないようです。「Gemini の設定」で確かめてください。');
+      if (res.status === 429) throw userError('Gemini の利用上限に達しました。少し待つか、Google AI Studio で支払い設定を確かめてください。（' + msg + '）');
+      if (res.status === 404) throw userError('このモデルは使えませんでした。「Gemini の設定」で別のモデルを選んでください。（' + msg + '）');
+      throw userError('Gemini でエラーになりました：' + msg);
+    }
+    var cand = json && json.candidates && json.candidates[0];
+    var ps = cand && cand.content && cand.content.parts || [];
+    var img = null, text = '';
+    ps.forEach(function (p) { var d = p.inlineData || p.inline_data; if (d && d.data) img = d; else if (p.text) text += p.text; });
+    if (!img) {
+      var why = (json && json.promptFeedback && json.promptFeedback.blockReason) || (cand && cand.finishReason) || '';
+      throw userError('画像が返ってきませんでした' + (why ? '（' + why + '）' : '') + '。写真を変えるか、もう一度試してください。' + (text ? ' AI の返答：' + text.slice(0, 200) : ''));
+    }
+    var bin = atob(img.data), arr = new Uint8Array(bin.length);
+    for (var j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j);
+    var out = await loadImage(new Blob([arr], { type: img.mimeType || img.mime_type || 'image/png' }));
+    // AI の出力の縦横比が元とずれたときは、中央で元の比率に切りそろえる
+    var ar = low.w / low.h, w = out.w, h = out.h;
+    if (Math.abs(Math.log((w / h) / ar)) > 0.002) { if (w / h > ar) w = Math.round(h * ar); else h = Math.round(w / ar); }
+    var c = canvasOf(w, h);
+    c.getContext('2d').drawImage(out.img, (out.w - w) / 2, (out.h - h) / 2, w, h, 0, 0, w, h);
+    URL.revokeObjectURL(out.url);
+    return { canvas: c, suffix: '_AI復元' };
+  }
+
+  // ---- 端末内 ESRGAN（タイルに分けて少しずつ処理し、メモリを抑える）----
+  var models = {};
+  function getModel(scale) {
+    if (!models[scale]) models[scale] = tf.loadLayersModel('models/x' + scale + '/model.json').catch(function (e) { delete models[scale]; throw e; });
+    return models[scale];
+  }
+
+  async function runLocal() {
+    if (typeof tf === 'undefined') throw userError('AI の部品を読み込めませんでした。一度ネットにつないだ状態でアプリを開き直してください。');
+    var scale = $('scale-2').checked ? 2 : 4;
+    var MAX = 4096 * 4096;
+    if (low.w * low.h * scale * scale > MAX && scale === 4) { scale = 2; }
+    if (low.w * low.h * scale * scale > MAX) throw userError('この写真は大きすぎて端末内では拡大できません（' + low.w + '×' + low.h + '）。');
+    say('AI を準備しています…'); prog.removeAttribute('value');
+    var model = await getModel(scale);
+    var c0 = canvasOf(low.w, low.h), g0 = c0.getContext('2d');
+    g0.drawImage(low.img, 0, 0);
+    var src = g0.getImageData(0, 0, low.w, low.h);
+    var W = low.w * scale, H = low.h * scale;
+    var out = canvasOf(W, H), go = out.getContext('2d');
+    var input = tf.tidy(function () { return tf.browser.fromPixels(src).toFloat(); });
+    var T = 96, P = 8;
+    var tiles = [];
+    for (var y = 0; y < low.h; y += T) for (var x = 0; x < low.w; x += T) tiles.push([x, y]);
+    try {
+      for (var i = 0; i < tiles.length; i++) {
+        var x0 = tiles[i][0], y0 = tiles[i][1];
+        var tw = Math.min(T, low.w - x0), th = Math.min(T, low.h - y0);
+        var px0 = Math.max(0, x0 - P), py0 = Math.max(0, y0 - P);
+        var px1 = Math.min(low.w, x0 + tw + P), py1 = Math.min(low.h, y0 + th + P);
+        var t = tf.tidy(function () {
+          var patch = input.slice([py0, px0, 0], [py1 - py0, px1 - px0, 3]).expandDims(0);
+          var y = model.predict(patch).squeeze();
+          y = y.slice([(y0 - py0) * scale, (x0 - px0) * scale, 0], [th * scale, tw * scale, 3]);
+          return y.clipByValue(0, 255).round().toInt();
+        });
+        var data = await t.data(); t.dispose();
+        var img = new ImageData(tw * scale, th * scale), d = img.data;
+        for (var k = 0, n = tw * scale * th * scale; k < n; k++) { d[k * 4] = data[k * 3]; d[k * 4 + 1] = data[k * 3 + 1]; d[k * 4 + 2] = data[k * 3 + 2]; d[k * 4 + 3] = 255; }
+        go.putImageData(img, x0 * scale, y0 * scale);
+        prog.value = (i + 1) / tiles.length;
+        say('端末内で拡大しています… ' + Math.round((i + 1) / tiles.length * 100) + '%');
+        await tf.nextFrame();
+      }
+    } finally { input.dispose(); }
+    return { canvas: out, suffix: '_' + scale + '倍' };
+  }
+
+  function userError(m) { var e = new Error(m); e.userFacing = true; return e; }
+
+  goBtn.addEventListener('click', async function () {
+    if (!low || busy) return;
+    busy = true; goBtn.disabled = true; prog.hidden = false;
+    try {
+      var r = way() === 'ai' ? await runAI() : await runLocal();
+      say('画像を仕上げています…');
+      var blob = await toBlob(r.canvas, 'image/png');
+      if (result) URL.revokeObjectURL(result.url);
+      var base = (low.file.name || 'photo').replace(/\.[^.]+$/, '') || 'photo';
+      result = { blob: blob, name: base + r.suffix + '.png', url: URL.createObjectURL(blob), w: r.canvas.width, h: r.canvas.height };
+      $('after-img').src = result.url;
+      $('before-img').src = low.url;
+      $('px-before').textContent = low.w + '×' + low.h;
+      $('px-after').textContent = result.w + '×' + result.h;
+      $('result').hidden = false;
+      say('できました。スライダーで元の写真と比べられます。', 'ok');
+      $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      console.error(e);
+      say(e && e.userFacing ? e.message : '処理できませんでした（' + (e && e.message || '不明なエラー') + '）。写真を小さくするか、倍率を下げて試してください。', 'error');
+    } finally {
+      busy = false; prog.hidden = true; prog.value = 0; goBtn.disabled = !low;
+    }
+  });
+
+  // 比べるスライダー：画像の上を指でなぞっても動かせる
+  var cmp = $('compare'), cut = $('cut');
+  function setCut(v) { cmp.style.setProperty('--cut', v + '%'); }
+  cut.addEventListener('input', function () { setCut(cut.value); });
+  cmp.addEventListener('pointerdown', function (e) {
+    function move(ev) { var r = cmp.getBoundingClientRect(); var v = Math.max(0, Math.min(100, (ev.clientX - r.left) / r.width * 100)); cut.value = v; setCut(v); }
+    move(e);
+    cmp.addEventListener('pointermove', move);
+    var up = function () { cmp.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointerup', up);
+  });
+
+  // 保存：Claude 内は downloads、それ以外は共有シート（写真に保存できる）
+  async function saveOutside(blob, name, href) {
+    try {
+      var f = new File([blob], name, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); return 'shared'; }
+    } catch (e) { if (e && e.name === 'AbortError') return 'cancelled'; }
+    var a = document.createElement('a'); a.href = href; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    return 'downloaded';
+  }
+  $('save').addEventListener('click', async function () {
+    if (!result) return;
+    var downloads = await downloadsReady;
+    if (!downloads) {
+      var how = await saveOutside(result.blob, result.name, result.url);
+      if (how === 'shared') say('共有シートから保存しました。', 'ok');
+      else if (how === 'cancelled') say('保存をキャンセルしました。');
+      else say('「' + result.name + '」を保存しました。ファイルアプリの「ダウンロード」を確認してください。', 'ok');
+      return;
+    }
+    $('save').disabled = true; say('保存の確認を待っています…');
+    try {
+      await downloads.save({ filename: result.name, data: result.blob });
+      say('共有シートで「画像を保存」か「"ファイル"に保存」を選んでください。', 'ok');
+    } catch (e) {
+      var c = e && e.code;
+      if (c === 'declined') say('保存をキャンセルしました。');
+      else if (c === 'rate_limited') say('確認画面がすでに開いています。少し待ってから押してください。', 'error');
+      else say('保存できませんでした（' + (c || '不明なエラー') + '）。', 'error');
+    } finally { $('save').disabled = false; }
+  });
+
+  render();
+})();
+</script>
+
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(function () {});</script>
+</body>
+</html>

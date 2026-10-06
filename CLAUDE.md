@@ -6,6 +6,7 @@ iPhone で使う個人用の Web アプリ置き場。持ち主は iPhone から
 
 - GitHub Pages（`main` ブランチの `docs/` フォルダ）: https://obts1.github.io/promotiontest/
 - `docs/` はホーム画面に追加して使うオフライン対応アプリ「動画ツール」。メニュー（`docs/index.html`）から各ツールへ移動する。
+- `docs/photo-upscale/` は別アプリ「写真の高画質化」（https://obts1.github.io/promotiontest/photo-upscale/）。アイコン・manifest・サービスワーカーを動画ツールと分けている。
 - `docs/` は生成物なので直接編集しない。変更したら `./site/build.sh` で作り直してコミットする。
 
 ## 構成
@@ -16,13 +17,16 @@ iPhone で使う個人用の Web アプリ置き場。持ち主は iPhone から
 | `clip-editor/src/page.html` | クリップつなぎの画面。`/*ENGINE*/` の位置に engine.js が埋め込まれる |
 | `clip-editor/build.sh` | `clip-editor/index.html`（1 ファイル版）を作る |
 | `mute-video/index.html` | 音声を消して保存するツール（1 ファイルで完結） |
+| `photo-upscale/index.html` | 写真の高画質化（別アプリ）。「AI で復元」は低解像度の写真と同じ人の参考写真を Gemini API（持ち主の API キー）に送る。「この端末で拡大」は同梱の ESRGAN（`models/`、TensorFlow.js は `vendor/`）で端末内処理 |
+| `photo-upscale/` のその他 | 別アプリ用の icon.svg・manifest・sw.template.js。`site/build.cjs` が `docs/photo-upscale/` に出力する |
 | `site/` | Pages 用のメニュー、manifest、アイコン、サービスワーカーの元と、`docs/` を作る `build.sh` |
 
 ## 方針
 
-- 動画は端末の外に送らない。処理はすべてブラウザ内で行う。外部の CDN やフォントも読み込まない（オフラインで動かすため）。
+- 動画は端末の外に送らない。処理はすべてブラウザ内で行う。（例外：写真の高画質化の「AI で復元」は、持ち主の了承のうえで Google の Gemini に写真を送る。端末内だけの方法も残す）外部の CDN やフォントも読み込まない（オフラインで動かすため）。
 - 画面は iPhone の縦持ち・Safari 前提。ライト／ダーク両対応。文言は日本語。
 - 保存は、Claude の Artifact 内では `downloads` 機能、それ以外では共有シート（`navigator.share`）を使う。
+- 同じオリジンでサービスワーカーが複数あるので、古いキャッシュを消すときは自分の名前（`video-tools-` / `photo-upscale-`）で始まるものだけを消す。
 - 新しいツールを足すときは、単体で動く HTML を作り、`site/menu.html` にカードを、`site/build.cjs` と `site/sw.template.js` にファイルを追加する。
 
 ## 確認

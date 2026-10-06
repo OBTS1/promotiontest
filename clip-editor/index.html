@@ -69,20 +69,35 @@
 
   .timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .clip {
-    display: grid; grid-template-columns: 1.6em 1fr auto; gap: 10px; align-items: center;
-    padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); min-width: 0;
+    display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center;
+    padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); min-width: 0;
+    position: relative; transition: transform 0.15s ease;
   }
   .clip.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-  .clip .num { font-family: var(--font-mono); font-size: 0.85rem; color: var(--muted); text-align: center; }
-  .clip .body { min-width: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; cursor: pointer; background: none; border: 0; padding: 0; text-align: left; min-height: 0; font-weight: 400; border-radius: 6px; }
-  .clip .name { font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .clip .range { font-size: 0.78rem; color: var(--muted); }
-  .bar { position: relative; height: 8px; border-radius: 4px; background: var(--trim); overflow: hidden; }
-  .bar span { position: absolute; top: 0; bottom: 0; background: var(--keep); border-radius: 4px; }
-  .clip .tools { display: flex; gap: 4px; }
-  .clip .tools button { min-height: 40px; min-width: 40px; padding: 4px 8px; font-size: 0.85rem; }
-  .ghost { opacity: 0.6; }
-  .ghost .tools { visibility: hidden; }
+  .clip.dragging { transition: none; z-index: 2; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25); }
+  .clip .body { display: contents; }
+  .thumb {
+    position: relative; width: 56px; height: 72px; border-radius: 8px; overflow: hidden; background: #000;
+    border: 0; padding: 0; min-height: 0; cursor: pointer;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .thumb .num {
+    position: absolute; left: 4px; top: 4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+    background: rgba(0, 0, 0, 0.6); color: #fff; font: 600 0.7rem/18px var(--font-mono); text-align: center;
+  }
+  .clip .len {
+    appearance: none; border: 0; background: none; padding: 0; min-height: 44px; justify-content: flex-start;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1rem; font-weight: 500; color: var(--ink); cursor: pointer;
+  }
+  .clip .del { min-width: 44px; padding: 4px; font-size: 1.1rem; color: var(--muted); }
+  .grip {
+    min-width: 44px; min-height: 52px; padding: 0; border: 0; background: none; color: var(--muted);
+    touch-action: none; cursor: grab; font-size: 1.3rem; letter-spacing: -2px;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  .grip:active { cursor: grabbing; }
+  .ghost { opacity: 0.55; }
+  .ghost button { pointer-events: none; }
   .tag { font-size: 0.72rem; letter-spacing: 0.08em; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-weight: 400; }
 
   .total { font-size: 0.9rem; color: var(--muted); }
@@ -99,7 +114,7 @@
 <div class="wrap">
   <header>
     <h1>クリップつなぎ</h1>
-    <p class="lead">動画の不要な部分をカットして、複数のクリップを好きな順につなげて保存します。再エンコードしないので画質はそのままです。</p>
+    <p class="lead">動画の不要な部分をカットして、複数のクリップを好きな順につなげて保存します。</p>
   </header>
 
   <section class="panel" id="editor" hidden aria-labelledby="editor-title">
@@ -158,7 +173,7 @@
     </div>
   </section>
 
-  <p class="foot">処理はすべてこの iPhone の中で行い、動画はどこにも送信しません。iPhone で撮った MOV / MP4 に対応しています。つなげるクリップは同じ形式・解像度・向きのものに限ります。</p>
+  <p class="foot">処理はすべてこの iPhone の中で行い、動画はどこにも送信しません。iPhone で撮った MOV / MP4 に対応しています。縦と横の動画が混ざっているときは、縦長に作り直して横長の動画には上下に黒帯が入ります（この場合だけ少し時間がかかり、画質もわずかに変わります）。</p>
 </div>
 
 <script>
@@ -686,118 +701,70 @@
 
   var DEFAULT_FTYP = box('ftyp', str('mp42'), u32s(0), str('isom'), str('mp42'), str('mp41'));
 
-  /**
-   * segments: [{ clip, start, end }]（秒。start はキーフレームに合わせて使われる）
-   * opts.mute: true で音声を入れない
-   * 戻り値: { blob, duration, audio: 'kept' | 'muted' | 'dropped' }
-   */
-  async function render(segments, opts) {
-    opts = opts || {};
-    if (!segments.length) fail('クリップがありません。');
-    var first = segments[0].clip;
-    var V0 = first.video;
+  // ---------- 区間の切り出し（共通） ----------
 
-    segments.forEach(function (s, i) {
-      var V = s.clip.video;
-      if (V.codec !== V0.codec) fail((i + 1) + ' 番目のクリップは動画の形式（' + V.codec + '）が 1 番目（' + V0.codec + '）と違うため、つなげられません。');
-      if (V.width !== V0.width || V.height !== V0.height) fail((i + 1) + ' 番目のクリップは解像度が 1 番目と違うため、つなげられません。');
-      if (!sameBytes(V.matrix, V0.matrix)) fail((i + 1) + ' 番目のクリップは縦横の向きが 1 番目と違うため、つなげられません。');
-    });
+  // 指定時刻以前のキーフレームから、終了時刻（Bフレームの切れ目まで延長）までのサンプル範囲
+  function videoRange(V, start, end) {
+    var k = -1, kFirst = -1;
+    for (var i = 0; i < V.count; i++) {
+      if (!V.sync[i]) continue;
+      var p = pts(V, i);
+      if (kFirst === -1 || p < pts(V, kFirst)) kFirst = i;
+      if (p <= start + EPS && (k === -1 || p > pts(V, k))) k = i;
+    }
+    if (k === -1) k = kFirst === -1 ? 0 : kFirst;
+    var startSec = pts(V, k);
+    var limit = (end - startSec) * V.timescale;
+    var m = k;
+    while (m < V.count && V.dts[m] - V.dts[k] < limit - EPS) m++;
+    if (m === k) m = k + 1;
+    // Bフレームがあると、デコード順の途中で切ると表示順に穴が空く。
+    // 「ここまでの表示時刻がすべて、残りの表示時刻より前」になる位置まで終わりを延ばす
+    while (m < V.count && !V.sync[m] && !cleanCut(V, k, m)) m++;
+    return { k: k, m: m, startSec: startSec };
+  }
 
-    var A0 = first.audio;
-    var audioOk = !opts.mute && segments.every(function (s) {
+  // 映像の合計時間に音声の合計時間がいちばん近くなるところまで入れる（つなぎ目でずれが溜まらない）
+  function takeAudio(ao, A, file, startSec, videoEndSec, segItems, timeBase) {
+    var a = 0;
+    while (a < A.count && pts(A, a) < startSec - EPS) a++;
+    var target = videoEndSec * ao.timescale;
+    while (a < A.count && ao.total + A.dur[a] / 2 < target) {
+      var ai = ao.size.length;
+      segItems.push({ file: file, off: A.offset[a], size: A.size[a], out: ao, idx: ai, t: ao.total / ao.timescale });
+      ao.dur.push(A.dur[a]);
+      ao.cto.push(A.cto[a]);
+      ao.size.push(A.size[a]);
+      ao.sync.push(1);
+      ao.desc.push(descIndex(ao, A.entries[A.desc[a]]));
+      ao.off.push(0);
+      ao.total += A.dur[a];
+      a++;
+    }
+  }
+
+  function audioSetup(segments, opts) {
+    var A0 = segments[0].clip.audio;
+    var ok = !opts.mute && segments.every(function (s) {
       var A = s.clip.audio;
       return A && A0 && A.codec === A0.codec && A.timescale === A0.timescale && A.channels === A0.channels;
     });
-    var audioState = opts.mute ? 'muted' : audioOk ? 'kept' : 'dropped';
-    if (audioState === 'dropped' && !segments.some(function (s) { return s.clip.audio; })) audioState = 'none';
-
-    var vo = newTrackOut(V0);
-    vo.timescale = V0.timescale;
-    var ao = audioOk ? newTrackOut(A0) : null;
+    var state = opts.mute ? 'muted' : ok ? 'kept' : 'dropped';
+    if (state === 'dropped' && !segments.some(function (s) { return s.clip.audio; })) state = 'none';
+    var ao = ok ? newTrackOut(A0) : null;
     if (ao) ao.timescale = A0.timescale;
+    return { ao: ao, state: state };
+  }
 
-    var items = []; // { file, off, size, out, idx }
-    var videoSec = 0;
-    var audioUnits = 0;
-
-    segments.forEach(function (seg) {
-      var clip = seg.clip;
-      var V = clip.video;
-
-      // 開始：指定時刻以前のキーフレーム
-      var k = -1, kFirst = -1;
-      for (var i = 0; i < V.count; i++) {
-        if (!V.sync[i]) continue;
-        var p = pts(V, i);
-        if (kFirst === -1 || p < pts(V, kFirst)) kFirst = i;
-        if (p <= seg.start + EPS && (k === -1 || p > pts(V, k))) k = i;
-      }
-      if (k === -1) k = kFirst === -1 ? 0 : kFirst;
-      var startSec = pts(V, k);
-      var limit = (seg.end - startSec) * V.timescale;
-      var m = k;
-      while (m < V.count && V.dts[m] - V.dts[k] < limit - EPS) m++;
-      if (m === k) m = k + 1;
-      // Bフレームがあると、デコード順の途中で切ると表示順に穴が空く。
-      // 「ここまでの表示時刻がすべて、残りの表示時刻より前」になる位置まで終わりを延ばす
-      while (m < V.count && !V.sync[m] && !cleanCut(V, k, m)) m++;
-
-      var segItems = [];
-      var inAcc = 0, outPrev = 0;
-      var scale = vo.timescale / V.timescale;
-      var kPts = V.dts[k] + V.cto[k];
-      for (var j = k; j < m; j++) {
-        // キーフレームより前に表示されるフレーム（前の区間を参照する）は入れない
-        if (j > k && V.dts[j] + V.cto[j] < kPts) continue;
-        var d;
-        if (scale === 1) d = V.dur[j];
-        else { inAcc += V.dur[j]; var oc = Math.round(inAcc * scale); d = oc - outPrev; outPrev = oc; }
-        var idx = vo.size.length;
-        vo.dur.push(d);
-        vo.cto.push(scale === 1 ? V.cto[j] : Math.round(V.cto[j] * scale));
-        vo.size.push(V.size[j]);
-        vo.sync.push(j === k ? 1 : V.sync[j]);
-        vo.desc.push(descIndex(vo, V.entries[V.desc[j]]));
-        vo.off.push(0);
-        vo.total += d;
-        segItems.push({ file: clip.file, off: V.offset[j], size: V.size[j], out: vo, idx: idx,
-          patch: j === k && isHevc(V.codec) ? nalLengthSize(V.entries[V.desc[j]]) : 0 });
-      }
-      videoSec = vo.total / vo.timescale;
-
-      if (ao) {
-        var A = clip.audio;
-        var a = 0;
-        while (a < A.count && pts(A, a) < startSec - EPS) a++;
-        // 映像の合計時間に音声の合計時間がいちばん近くなるところまで入れる（つなぎ目でずれが溜まらない）
-        var target = videoSec * ao.timescale;
-        while (a < A.count && audioUnits + A.dur[a] / 2 < target) {
-          var ai = ao.size.length;
-          ao.dur.push(A.dur[a]);
-          ao.cto.push(A.cto[a]);
-          ao.size.push(A.size[a]);
-          ao.sync.push(1);
-          ao.desc.push(descIndex(ao, A.entries[A.desc[a]]));
-          ao.off.push(0);
-          ao.total += A.dur[a];
-          audioUnits += A.dur[a];
-          segItems.push({ file: clip.file, off: A.offset[a], size: A.size[a], out: ao, idx: ai });
-          a++;
-        }
-      }
-
-      // 元ファイルでの並び順のまま書き出す（連続した範囲をまとめて参照できる）
-      segItems.sort(function (x, y) { return x.off - y.off; });
-      for (var q = 0; q < segItems.length; q++) items.push(segItems[q]);
-    });
-
+  // items: { file, off, size, out, idx } または { bytes, size, out, idx }
+  async function mux(ftyp, vo, ao, items) {
     var dataSize = 0;
     var ranges = [];
     for (var n = 0; n < items.length; n++) {
       var it = items[n];
       it.out.off[it.idx] = dataSize;
       dataSize += it.size;
+      if (it.bytes) { ranges.push({ bytes: it.bytes }); continue; }
       if (it.patch) {
         // 区間の先頭フレームだけは読み込んで書き換える（つなぎ目の HEVC 対策）
         var bytes = await readBytes(it.file, it.off, it.off + it.size);
@@ -810,7 +777,6 @@
       else ranges.push({ file: it.file, start: it.off, end: it.off + it.size });
     }
 
-    var ftyp = first.ftyp || DEFAULT_FTYP;
     var bigMdat = dataSize + 8 > MAX32;
     var mdatHeaderSize = bigMdat ? 16 : 8;
     var use64 = ftyp.length + dataSize + mdatHeaderSize + 64 * 1048576 > MAX32;
@@ -831,8 +797,7 @@
       return box('moov', mvhd, tracks);
     }
     var sized = buildMoov(0);
-    var base = ftyp.length + sized.length + mdatHeaderSize;
-    var moov = buildMoov(base);
+    var moov = buildMoov(ftyp.length + sized.length + mdatHeaderSize);
 
     var mdatHeader = bigMdat
       ? concat([u32s(1), str('mdat'), u64b(dataSize + 16)])
@@ -840,14 +805,381 @@
 
     var parts = [ftyp, moov, mdatHeader];
     ranges.forEach(function (r) { parts.push(r.bytes || r.file.slice(r.start, r.end)); });
-    return {
-      blob: new Blob(parts, { type: 'video/mp4' }),
-      duration: vo.total / vo.timescale,
-      audio: audioState
-    };
+    return new Blob(parts, { type: 'video/mp4' });
   }
 
-  var api = { openClip: openClip, snapStart: snapStart, render: render };
+  // ---------- 向き ----------
+
+  // tkhd の行列から表示時の回転（時計回り 0/90/180/270 度）を求める
+  function rotation(T) {
+    var dv = new DataView(T.matrix.buffer, T.matrix.byteOffset, 36);
+    var a = dv.getInt32(0) / 65536, b = dv.getInt32(4) / 65536;
+    var deg = Math.round(Math.atan2(b, a) * 180 / Math.PI);
+    return ((Math.round(deg / 90) * 90) % 360 + 360) % 360;
+  }
+
+  function displaySize(clip) {
+    var V = clip.video;
+    var r = rotation(V);
+    var w = V.width || Math.round(V.tkWidth / 65536), h = V.height || Math.round(V.tkHeight / 65536);
+    return r % 180 ? { w: h, h: w, rot: r } : { w: w, h: h, rot: r };
+  }
+
+  /** 再エンコードなしでつなげられないなら、その理由を返す（つなげられるなら null） */
+  function incompatibility(segments) {
+    var V0 = segments[0].clip.video;
+    for (var i = 1; i < segments.length; i++) {
+      var V = segments[i].clip.video;
+      if (V.codec !== V0.codec) return 'codec';
+      if (V.width !== V0.width || V.height !== V0.height) return 'size';
+      if (!sameBytes(V.matrix, V0.matrix)) return 'rotation';
+    }
+    return null;
+  }
+
+  // ---------- 再エンコードなしの書き出し ----------
+
+  /**
+   * segments: [{ clip, start, end }]（秒。start はキーフレームに合わせて使われる）
+   * opts.mute: true で音声を入れない
+   * 戻り値: { blob, duration, audio: 'kept' | 'muted' | 'dropped' | 'none', reencoded: false }
+   */
+  async function render(segments, opts) {
+    opts = opts || {};
+    if (!segments.length) fail('クリップがありません。');
+    if (incompatibility(segments)) fail('形式・解像度・向きが違うクリップが混ざっています。');
+    var first = segments[0].clip;
+    var V0 = first.video;
+    var au = audioSetup(segments, opts);
+    var ao = au.ao;
+
+    var vo = newTrackOut(V0);
+    vo.timescale = V0.timescale;
+    var items = [];
+
+    segments.forEach(function (seg) {
+      var clip = seg.clip;
+      var V = clip.video;
+      var r = videoRange(V, seg.start, seg.end);
+      var segItems = [];
+      var inAcc = 0, outPrev = 0;
+      var scale = vo.timescale / V.timescale;
+      var kPts = V.dts[r.k] + V.cto[r.k];
+      for (var j = r.k; j < r.m; j++) {
+        // キーフレームより前に表示されるフレーム（前の区間を参照する）は入れない
+        if (j > r.k && V.dts[j] + V.cto[j] < kPts) continue;
+        var d;
+        if (scale === 1) d = V.dur[j];
+        else { inAcc += V.dur[j]; var oc = Math.round(inAcc * scale); d = oc - outPrev; outPrev = oc; }
+        var idx = vo.size.length;
+        vo.dur.push(d);
+        vo.cto.push(scale === 1 ? V.cto[j] : Math.round(V.cto[j] * scale));
+        vo.size.push(V.size[j]);
+        vo.sync.push(j === r.k ? 1 : V.sync[j]);
+        vo.desc.push(descIndex(vo, V.entries[V.desc[j]]));
+        vo.off.push(0);
+        vo.total += d;
+        segItems.push({ file: clip.file, off: V.offset[j], size: V.size[j], out: vo, idx: idx,
+          patch: j === r.k && isHevc(V.codec) ? nalLengthSize(V.entries[V.desc[j]]) : 0 });
+      }
+      if (ao) takeAudio(ao, clip.audio, clip.file, r.startSec, vo.total / vo.timescale, segItems);
+      // 元ファイルでの並び順のまま書き出す（連続した範囲をまとめて参照できる）
+      segItems.sort(function (x, y) { return x.off - y.off; });
+      for (var q = 0; q < segItems.length; q++) items.push(segItems[q]);
+    });
+
+    var blob = await mux(first.ftyp || DEFAULT_FTYP, vo, ao, items);
+    return { blob: blob, duration: vo.total / vo.timescale, audio: au.state, reencoded: false };
+  }
+
+  // ---------- WebCodecs（デコード・エンコード） ----------
+
+  function hex2(n) { return (n < 16 ? '0' : '') + n.toString(16); }
+
+  // サンプル記述の中の設定ボックス（avcC / hvcC / vpcC）を探す
+  function configBox(entry) {
+    var dv = new DataView(entry.buffer, entry.byteOffset, entry.byteLength);
+    var pos = 86; // VisualSampleEntry の固定部分の後ろ
+    while (pos + 8 <= entry.length) {
+      var size = dv.getUint32(pos);
+      var type = fourcc(entry, pos + 4);
+      if (size < 8 || pos + size > entry.length) break;
+      if (type === 'avcC' || type === 'hvcC' || type === 'vpcC' || type === 'av1C') {
+        return { type: type, body: entry.slice(pos + 8, pos + size) };
+      }
+      pos += size;
+    }
+    return null;
+  }
+
+  function decoderConfig(V, entry) {
+    var cfg = configBox(entry);
+    var codec = fourcc(entry, 4);
+    var c = { codedWidth: V.width, codedHeight: V.height };
+    if (cfg && cfg.type === 'avcC') {
+      c.codec = 'avc1.' + hex2(cfg.body[1]) + hex2(cfg.body[2]) + hex2(cfg.body[3]);
+      c.description = cfg.body;
+    } else if (cfg && cfg.type === 'hvcC') {
+      var b = cfg.body;
+      var space = ['', 'A', 'B', 'C'][b[1] >> 6];
+      var tier = (b[1] >> 5) & 1 ? 'H' : 'L';
+      var profile = b[1] & 31;
+      var compat = ((b[2] << 24) | (b[3] << 16) | (b[4] << 8) | b[5]) >>> 0;
+      var rev = 0;
+      for (var i = 0; i < 32; i++) if (compat & (1 << i)) rev |= 1 << (31 - i);
+      var cons = [b[6], b[7], b[8], b[9], b[10], b[11]];
+      while (cons.length && cons[cons.length - 1] === 0) cons.pop();
+      c.codec = (codec === 'hev1' ? 'hev1' : 'hvc1') + '.' + space + profile + '.' + (rev >>> 0).toString(16) + '.' + tier + b[12] +
+        (cons.length ? '.' + cons.map(function (x) { return x.toString(16).toUpperCase(); }).join('.') : '');
+      c.description = cfg.body;
+    } else if (cfg && cfg.type === 'vpcC') {
+      var v = cfg.body; // version/flags(4) profile level bitDepth...
+      c.codec = 'vp09.' + hex2(v[4]).padStart(2, '0') + '.' + String(v[5]).padStart(2, '0') + '.' + String(v[6] >> 4).padStart(2, '0');
+    } else {
+      fail('この形式（' + codec + '）の動画は作り直しに対応していません。');
+    }
+    return c;
+  }
+
+  function makeCanvas(w, h) {
+    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+
+  // 回転を反映し、W×H の中に収まるように（余白は黒）描く
+  function drawFit(ctx, frame, srcW, srcH, rot, W, H) {
+    var dw = rot % 180 ? srcH : srcW, dh = rot % 180 ? srcW : srcH;
+    var s = Math.min(W / dw, H / dh);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.rotate(rot * Math.PI / 180);
+    ctx.drawImage(frame, -srcW * s / 2, -srcH * s / 2, srcW * s, srcH * s);
+    ctx.restore();
+  }
+
+  function waitQueue(test) {
+    return new Promise(function (resolve) {
+      (function check() { if (test()) resolve(); else setTimeout(check, 4); })();
+    });
+  }
+
+  /** クリップの最初のコマを画像（data URL）にする。作れなければ null */
+  async function thumbnail(clip, size) {
+    if (typeof VideoDecoder === 'undefined') return null;
+    try {
+      var V = clip.video;
+      var k = 0;
+      while (k < V.count && !V.sync[k]) k++;
+      if (k >= V.count) return null;
+      var cfg = decoderConfig(V, V.entries[V.desc[k]]);
+      var sup = await VideoDecoder.isConfigSupported(cfg);
+      if (!sup.supported) return null;
+      var ds = displaySize(clip);
+      var scale = size / Math.max(ds.w, ds.h);
+      var W = Math.max(2, Math.round(ds.w * scale)), H = Math.max(2, Math.round(ds.h * scale));
+      var canvas = makeCanvas(W, H);
+      var ctx = canvas.getContext('2d');
+      var drawn = false;
+      var dec = new VideoDecoder({
+        output: function (f) {
+          if (!drawn) { drawFit(ctx, f, f.displayWidth, f.displayHeight, ds.rot, W, H); drawn = true; }
+          f.close();
+        },
+        error: function () {}
+      });
+      dec.configure(cfg);
+      var data = await readBytes(clip.file, V.offset[k], V.offset[k] + V.size[k]);
+      dec.decode(new EncodedVideoChunk({ type: 'key', timestamp: 0, data: data }));
+      await dec.flush();
+      dec.close();
+      if (!drawn) return null;
+      if (canvas.convertToBlob) {
+        var blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+        return URL.createObjectURL(blob);
+      }
+      return canvas.toDataURL('image/jpeg', 0.8);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function visualEntry(fourccName, W, H, cfgBox) {
+    return box(fourccName,
+      new Uint8Array(6), u16s(1), new Uint8Array(16),
+      u16s(W, H), u32s(0x00480000, 0x00480000, 0), u16s(1),
+      new Uint8Array(32), u16s(0x0018, 0xffff),
+      cfgBox);
+  }
+
+  var ENCODERS = [
+    { codec: 'hvc1.1.6.L123.B0', fourcc: 'hvc1', cfg: 'hvcC', extra: { hevc: { format: 'hevc' } }, bitrate: 12e6 },
+    { codec: 'avc1.64002A', fourcc: 'avc1', cfg: 'avcC', extra: { avc: { format: 'avc' } }, bitrate: 16e6 },
+    { codec: 'vp09.00.40.08', fourcc: 'vp09', cfg: 'vpcC', extra: {}, bitrate: 10e6 }
+  ];
+
+  /**
+   * 向き・解像度が違うクリップを、縦長 1080×1920 に作り直してつなげる（横長の動画は上下に黒帯）。
+   * 音声は再エンコードせずにそのままコピーする。
+   * opts.mute / opts.onProgress(0〜1)
+   */
+  async function reencode(segments, opts) {
+    opts = opts || {};
+    if (!segments.length) fail('クリップがありません。');
+    if (typeof VideoEncoder === 'undefined' || typeof VideoDecoder === 'undefined') {
+      fail('この画面では動画の作り直しができません。Claude アプリか Safari の最新版で開いてください。');
+    }
+    var W = 1080, H = 1920;
+    var fps = Math.min(60, Math.max(24, Math.round(segments[0].clip.video.count / Math.max(0.1, segments[0].clip.duration))));
+
+    var choice = null, config = null;
+    for (var c = 0; c < ENCODERS.length && !choice; c++) {
+      var e = ENCODERS[c];
+      var cfg = Object.assign({ codec: e.codec, width: W, height: H, bitrate: e.bitrate, framerate: fps, latencyMode: 'quality' }, e.extra);
+      try {
+        if ((await VideoEncoder.isConfigSupported(cfg)).supported) { choice = e; config = cfg; }
+      } catch (err) { /* 次の候補へ */ }
+    }
+    if (!choice) fail('この端末では動画の作り直しに対応していません。');
+
+    var totalSec = segments.reduce(function (sum, s) { return sum + Math.max(0, s.end - s.start); }, 0);
+    var canvas = makeCanvas(W, H);
+    var ctx = canvas.getContext('2d');
+    var chunks = [];
+    var description = null;
+    var encError = null;
+    var encoder = new VideoEncoder({
+      output: function (chunk, meta) {
+        if (meta && meta.decoderConfig && meta.decoderConfig.description && !description) {
+          var d = meta.decoderConfig.description;
+          description = new Uint8Array(d.buffer ? d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) : d.slice(0));
+        }
+        var data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        chunks.push({ data: data, ts: chunk.timestamp, dur: chunk.duration || 0, key: chunk.type === 'key' });
+      },
+      error: function (err) { encError = err; }
+    });
+    encoder.configure(config);
+
+    var au = audioSetup(segments, opts);
+    var ao = au.ao;
+    var audioItems = [];
+    var outBase = 0; // マイクロ秒
+    var lastKey = -Infinity;
+    var frameUs = 1e6 / fps;
+
+    for (var si = 0; si < segments.length; si++) {
+      var seg = segments[si];
+      var clip = seg.clip;
+      var V = clip.video;
+      var ds = displaySize(clip);
+      var r = videoRange(V, seg.start, seg.end);
+      var segStart = Math.max(seg.start, r.startSec);
+      var segEnd = Math.min(seg.end, clip.duration);
+      var dcfg = decoderConfig(V, V.entries[V.desc[r.k]]);
+      if (!(await VideoDecoder.isConfigSupported(dcfg)).supported) {
+        fail((si + 1) + ' 番目のクリップの形式はこの端末で読み込めません。');
+      }
+
+      var segMaxEnd = outBase;
+      var decError = null;
+      var decoder = new VideoDecoder({
+        output: function (frame) {
+          var t = frame.timestamp / 1e6;
+          if (t >= segStart - 1e-4 && t < segEnd - 1e-4) {
+            drawFit(ctx, frame, frame.displayWidth, frame.displayHeight, ds.rot, W, H);
+            var ts = Math.round(outBase + (t - segStart) * 1e6);
+            var dur = frame.duration || frameUs;
+            var vf = new VideoFrame(canvas, { timestamp: ts, duration: dur });
+            var key = ts - lastKey >= 1e6;
+            if (key) lastKey = ts;
+            encoder.encode(vf, { keyFrame: key });
+            vf.close();
+            segMaxEnd = Math.max(segMaxEnd, ts + dur);
+          }
+          frame.close();
+        },
+        error: function (err) { decError = err; }
+      });
+      decoder.configure(dcfg);
+
+      var kPts = V.dts[r.k] + V.cto[r.k];
+      for (var j = r.k; j < r.m; j++) {
+        if (j > r.k && V.dts[j] + V.cto[j] < kPts) continue;
+        if (decError || encError) break;
+        var data = await readBytes(clip.file, V.offset[j], V.offset[j] + V.size[j]);
+        decoder.decode(new EncodedVideoChunk({
+          type: j === r.k || V.sync[j] ? 'key' : 'delta',
+          timestamp: Math.round(pts(V, j) * 1e6),
+          duration: Math.round(V.dur[j] / V.timescale * 1e6),
+          data: data
+        }));
+        await waitQueue(function () { return decoder.decodeQueueSize < 6 && encoder.encodeQueueSize < 6; });
+        if (opts.onProgress && totalSec > 0) {
+          opts.onProgress(Math.min(0.99, (outBase / 1e6 + Math.max(0, pts(V, j) - segStart)) / totalSec));
+        }
+      }
+      if (!decError && !encError) await decoder.flush();
+      decoder.close();
+      if (decError) fail((si + 1) + ' 番目のクリップを読み込めませんでした。');
+      if (encError) fail('動画の作り直しに失敗しました。');
+
+      if (segMaxEnd <= outBase) segMaxEnd = outBase + frameUs; // 万一フレームが無い場合
+      outBase = segMaxEnd;
+      if (ao) takeAudio(ao, clip.audio, clip.file, segStart, outBase / 1e6, audioItems);
+    }
+    await encoder.flush();
+    encoder.close();
+    if (encError) fail('動画の作り直しに失敗しました。');
+    if (!chunks.length) fail('書き出す映像がありません。');
+
+    // エンコード結果を映像トラックにする（タイムスケール 90000）
+    var TS = 90000;
+    var ptsU = chunks.map(function (ch) { return Math.round(ch.ts * TS / 1e6); });
+    var sorted = ptsU.slice().sort(function (a, b) { return a - b; });
+    var delay = 0;
+    for (var q = 0; q < ptsU.length; q++) delay = Math.max(delay, sorted[q] - ptsU[q]);
+    var lastEnd = Math.round(outBase * TS / 1e6);
+
+    var cfgBox;
+    if (choice.cfg === 'vpcC') cfgBox = full('vpcC', 1, 0, new Uint8Array([0, 40, (8 << 4) | (1 << 1), 1, 1, 1]), u16s(0));
+    else {
+      if (!description) fail('動画の作り直しに失敗しました（設定情報がありません）。');
+      cfgBox = box(choice.cfg, description);
+    }
+    var vo = newTrackOut({ matrix: IDENTITY, tkWidth: W * 65536, tkHeight: H * 65536, lang: segments[0].clip.video.lang });
+    vo.timescale = TS;
+    vo.entries.push(visualEntry(choice.fourcc, W, H, cfgBox));
+    var videoItems = [];
+    chunks.forEach(function (ch, n) {
+      var dts = sorted[n] - delay;
+      var next = n + 1 < chunks.length ? sorted[n + 1] - delay : Math.max(lastEnd - delay, dts + 1);
+      var d = Math.max(1, next - dts);
+      videoItems.push({ bytes: ch.data, size: ch.data.length, out: vo, idx: n, t: dts / TS });
+      vo.dur.push(d);
+      vo.cto.push(ptsU[n] - dts);
+      vo.size.push(ch.data.length);
+      vo.sync.push(ch.key ? 1 : 0);
+      vo.desc.push(0);
+      vo.off.push(0);
+      vo.total += d;
+    });
+
+    // 映像と音声を時刻順に交互に並べる
+    var items = videoItems.concat(audioItems).sort(function (a, b) { return a.t - b.t; });
+    var blob = await mux(DEFAULT_FTYP, vo, ao, items);
+    if (opts.onProgress) opts.onProgress(1);
+    return { blob: blob, duration: vo.total / TS, audio: au.state, reencoded: true, codec: choice.fourcc };
+  }
+
+  var api = {
+    openClip: openClip, snapStart: snapStart, render: render, reencode: reencode,
+    incompatibility: incompatibility, thumbnail: thumbnail, displaySize: displaySize
+  };
   root.ClipEngine = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
@@ -885,14 +1217,10 @@
     function renderTimeline() {
       timeline.textContent = '';
       if (!segs.length) {
-        [['IMG_0412.MOV', 0.08, 0.55, '00:01.00 – 00:06.50'], ['IMG_0415.MOV', 0.2, 0.9, '00:02.00 – 00:09.00']].forEach(function (ex, i) {
+        ['00:05.50', '00:07.00'].forEach(function (len, i) {
           var li = document.createElement('li');
           li.className = 'clip ghost';
-          li.innerHTML = '<span class="num">' + (i + 1) + '</span><div class="body"><span class="name"></span><span class="range tc"></span><div class="bar"><span></span></div></div><div class="tools"><button type="button" tabindex="-1">↑</button></div>';
-          li.querySelector('.name').textContent = ex[0] + '（例）';
-          li.querySelector('.range').textContent = ex[3];
-          var bar = li.querySelector('.bar span');
-          bar.style.left = ex[1] * 100 + '%'; bar.style.width = (ex[2] - ex[1]) * 100 + '%';
+          li.innerHTML = '<span class="thumb"><span class="num">' + (i + 1) + '</span></span><span class="len">' + len + '</span><span class="tag">例</span><span class="grip" aria-hidden="true">⋮⋮</span>';
           timeline.append(li);
         });
         $('total').innerHTML = '合計 <b class="tc">00:00.00</b>';
@@ -904,47 +1232,87 @@
         var li = document.createElement('li');
         li.className = 'clip' + (s.id === selected ? ' selected' : '');
 
-        var num = document.createElement('span');
-        num.className = 'num'; num.textContent = i + 1;
+        var thumb = document.createElement('button');
+        thumb.type = 'button'; thumb.className = 'thumb';
+        thumb.setAttribute('aria-label', (i + 1) + ' 番目のクリップを編集');
+        if (s.clip.thumb) {
+          var img = document.createElement('img');
+          img.src = s.clip.thumb; img.alt = '';
+          thumb.append(img);
+        }
+        var num = document.createElement('span'); num.className = 'num'; num.textContent = i + 1;
+        thumb.append(num);
+        thumb.addEventListener('click', function () { select(s.id); });
 
-        var body = document.createElement('button');
-        body.type = 'button'; body.className = 'body';
-        body.setAttribute('aria-label', (i + 1) + ' 番目のクリップを編集');
-        var name = document.createElement('span'); name.className = 'name'; name.textContent = s.clip.name;
-        var range = document.createElement('span'); range.className = 'range tc';
-        range.textContent = tc(s.start) + ' – ' + tc(s.end) + '（' + tc(s.end - s.start) + '）';
-        var bar = document.createElement('div'); bar.className = 'bar';
-        var fill = document.createElement('span');
-        fill.style.left = (s.start / s.clip.duration * 100) + '%';
-        fill.style.width = (Math.max(0, s.end - s.start) / s.clip.duration * 100) + '%';
-        bar.append(fill);
-        body.append(name, range, bar);
-        body.addEventListener('click', function () { select(s.id); });
+        var len = document.createElement('button');
+        len.type = 'button'; len.className = 'len';
+        len.textContent = tc(s.end - s.start);
+        len.setAttribute('aria-label', (i + 1) + ' 番目のクリップを編集（長さ ' + tc(s.end - s.start) + '）');
+        len.addEventListener('click', function () { select(s.id); });
 
-        var tools = document.createElement('div'); tools.className = 'tools';
-        tools.append(
-          tool('↑', '前へ移動', i === 0, function () { move(i, -1); }),
-          tool('↓', '後ろへ移動', i === segs.length - 1, function () { move(i, 1); }),
-          tool('削除', 'このクリップを削除', false, function () { remove(s.id); })
-        );
-        li.append(num, body, tools);
+        var del = document.createElement('button');
+        del.type = 'button'; del.className = 'del'; del.textContent = '✕';
+        del.setAttribute('aria-label', (i + 1) + ' 番目のクリップを削除');
+        del.addEventListener('click', function () { remove(s.id); });
+
+        var grip = document.createElement('button');
+        grip.type = 'button'; grip.className = 'grip'; grip.textContent = '⋮⋮';
+        grip.setAttribute('aria-label', '押したまま上下に動かして並べ替え');
+        grip.addEventListener('pointerdown', function (ev) { startDrag(ev, li, i); });
+
+        li.append(thumb, len, del, grip);
         timeline.append(li);
       });
       $('total').innerHTML = '合計 <b class="tc">' + tc(total) + '</b>';
     }
 
-    function tool(label, aria, disabled, fn) {
-      var b = document.createElement('button');
-      b.type = 'button'; b.textContent = label; b.setAttribute('aria-label', aria); b.disabled = disabled;
-      b.addEventListener('click', fn);
-      return b;
-    }
+    // ---------- 指でつかんで並べ替え ----------
+    function startDrag(ev, li, index) {
+      ev.preventDefault();
+      var grip = ev.currentTarget;
+      var rows = Array.prototype.slice.call(timeline.children);
+      var tops = rows.map(function (r) { return r.getBoundingClientRect().top + window.scrollY; });
+      var heights = rows.map(function (r) { return r.getBoundingClientRect().height; });
+      var step = heights[index] + 8;
+      var startY = ev.pageY;
+      var target = index;
+      try { grip.setPointerCapture(ev.pointerId); } catch (e) { /* 古いブラウザ */ }
+      li.classList.add('dragging');
 
-    function move(i, d) {
-      var j = i + d;
-      if (j < 0 || j >= segs.length) return;
-      var t = segs[i]; segs[i] = segs[j]; segs[j] = t;
-      invalidate(); renderTimeline(); renderEditor();
+      function onMove(e) {
+        if (e.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
+        else if (e.clientY < 60) window.scrollBy(0, -12);
+        var dy = e.pageY - startY;
+        li.style.transform = 'translateY(' + dy + 'px)';
+        var center = tops[index] + heights[index] / 2 + dy;
+        target = 0;
+        for (var j = 0; j < rows.length; j++) {
+          if (j !== index && tops[j] + heights[j] / 2 < center) target++;
+        }
+        rows.forEach(function (r, j) {
+          if (j === index) return;
+          var shift = 0;
+          if (j > index && j <= target) shift = -step;
+          if (j < index && j >= target) shift = step;
+          r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+        });
+      }
+      function onUp() {
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onUp);
+        grip.removeEventListener('pointercancel', onUp);
+        rows.forEach(function (r) { r.style.transform = ''; });
+        li.classList.remove('dragging');
+        if (target !== index) {
+          var moved = segs.splice(index, 1)[0];
+          segs.splice(target, 0, moved);
+          invalidate(); renderEditor();
+        }
+        renderTimeline();
+      }
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onUp);
+      grip.addEventListener('pointercancel', onUp);
     }
 
     function remove(id) {
@@ -1050,6 +1418,7 @@
         try {
           var clip = await E.openClip(files[i]);
           clip.url = URL.createObjectURL(files[i]);
+          E.thumbnail(clip, 160).then(function (c) { return function (url) { if (url) { c.thumb = url; renderTimeline(); } }; }(clip));
           var s = { id: nextId++, clip: clip, start: clip.firstTime, end: clip.duration };
           segs.push(s);
           if (selected === null) selected = s.id;
@@ -1071,7 +1440,15 @@
       btn.disabled = true;
       say(st, '書き出しています…');
       try {
-        var r = await E.render(segs.map(function (s) { return { clip: s.clip, start: s.start, end: s.end }; }), { mute: $('mute').checked });
+        var list = segs.map(function (s) { return { clip: s.clip, start: s.start, end: s.end }; });
+        var r;
+        if (E.incompatibility(list)) {
+          var msg = '向きや解像度が違うクリップがあるので、縦長（1080×1920）に作り直しています… ';
+          say(st, msg + '0%');
+          r = await E.reencode(list, { mute: $('mute').checked, onProgress: function (f) { say(st, msg + Math.round(f * 100) + '%'); } });
+        } else {
+          r = await E.render(list, { mute: $('mute').checked });
+        }
         var d = new Date();
         var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' +
           String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
@@ -1081,7 +1458,8 @@
         $('result').hidden = false;
         var size = r.blob.size < 1048576 ? (r.blob.size / 1024).toFixed(0) + ' KB' : (r.blob.size / 1048576).toFixed(1) + ' MB';
         var note = r.audio === 'dropped' ? '（音声の形式がそろっていないか、音声のないクリップがあるため、音声なしで書き出しました）' : '';
-        say(st, '書き出しました：' + tc(r.duration) + '・' + size + note, r.audio === 'dropped' ? 'error' : 'ok');
+        var how = r.reencoded ? '（縦長に作り直し）' : '（画質そのまま）';
+        say(st, '書き出しました：' + tc(r.duration) + '・' + size + how + note, r.audio === 'dropped' ? 'error' : 'ok');
         say($('save-status'), '');
       } catch (e) {
         say(st, e && e.userFacing ? e.message : '書き出しに失敗しました。クリップを確認してもう一度試してください。', 'error');

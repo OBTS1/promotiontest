@@ -69,20 +69,35 @@
 
   .timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .clip {
-    display: grid; grid-template-columns: 1.6em 1fr auto; gap: 10px; align-items: center;
-    padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); min-width: 0;
+    display: grid; grid-template-columns: auto 1fr auto auto; gap: 12px; align-items: center;
+    padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); min-width: 0;
+    position: relative; transition: transform 0.15s ease;
   }
   .clip.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-  .clip .num { font-family: var(--font-mono); font-size: 0.85rem; color: var(--muted); text-align: center; }
-  .clip .body { min-width: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; cursor: pointer; background: none; border: 0; padding: 0; text-align: left; min-height: 0; font-weight: 400; border-radius: 6px; }
-  .clip .name { font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .clip .range { font-size: 0.78rem; color: var(--muted); }
-  .bar { position: relative; height: 8px; border-radius: 4px; background: var(--trim); overflow: hidden; }
-  .bar span { position: absolute; top: 0; bottom: 0; background: var(--keep); border-radius: 4px; }
-  .clip .tools { display: flex; gap: 4px; }
-  .clip .tools button { min-height: 40px; min-width: 40px; padding: 4px 8px; font-size: 0.85rem; }
-  .ghost { opacity: 0.6; }
-  .ghost .tools { visibility: hidden; }
+  .clip.dragging { transition: none; z-index: 2; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25); }
+  .clip .body { display: contents; }
+  .thumb {
+    position: relative; width: 56px; height: 72px; border-radius: 8px; overflow: hidden; background: #000;
+    border: 0; padding: 0; min-height: 0; cursor: pointer;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .thumb .num {
+    position: absolute; left: 4px; top: 4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+    background: rgba(0, 0, 0, 0.6); color: #fff; font: 600 0.7rem/18px var(--font-mono); text-align: center;
+  }
+  .clip .len {
+    appearance: none; border: 0; background: none; padding: 0; min-height: 44px; justify-content: flex-start;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1rem; font-weight: 500; color: var(--ink); cursor: pointer;
+  }
+  .clip .del { min-width: 44px; padding: 4px; font-size: 1.1rem; color: var(--muted); }
+  .grip {
+    min-width: 44px; min-height: 52px; padding: 0; border: 0; background: none; color: var(--muted);
+    touch-action: none; cursor: grab; font-size: 1.3rem; letter-spacing: -2px;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  }
+  .grip:active { cursor: grabbing; }
+  .ghost { opacity: 0.55; }
+  .ghost button { pointer-events: none; }
   .tag { font-size: 0.72rem; letter-spacing: 0.08em; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-weight: 400; }
 
   .total { font-size: 0.9rem; color: var(--muted); }
@@ -99,7 +114,7 @@
 <div class="wrap">
   <header>
     <h1>クリップつなぎ</h1>
-    <p class="lead">動画の不要な部分をカットして、複数のクリップを好きな順につなげて保存します。再エンコードしないので画質はそのままです。</p>
+    <p class="lead">動画の不要な部分をカットして、複数のクリップを好きな順につなげて保存します。</p>
   </header>
 
   <section class="panel" id="editor" hidden aria-labelledby="editor-title">
@@ -158,7 +173,7 @@
     </div>
   </section>
 
-  <p class="foot">処理はすべてこの iPhone の中で行い、動画はどこにも送信しません。iPhone で撮った MOV / MP4 に対応しています。つなげるクリップは同じ形式・解像度・向きのものに限ります。</p>
+  <p class="foot">処理はすべてこの iPhone の中で行い、動画はどこにも送信しません。iPhone で撮った MOV / MP4 に対応しています。縦と横の動画が混ざっているときは、縦長に作り直して横長の動画には上下に黒帯が入ります（この場合だけ少し時間がかかり、画質もわずかに変わります）。</p>
 </div>
 
 <script>
@@ -196,14 +211,10 @@
     function renderTimeline() {
       timeline.textContent = '';
       if (!segs.length) {
-        [['IMG_0412.MOV', 0.08, 0.55, '00:01.00 – 00:06.50'], ['IMG_0415.MOV', 0.2, 0.9, '00:02.00 – 00:09.00']].forEach(function (ex, i) {
+        ['00:05.50', '00:07.00'].forEach(function (len, i) {
           var li = document.createElement('li');
           li.className = 'clip ghost';
-          li.innerHTML = '<span class="num">' + (i + 1) + '</span><div class="body"><span class="name"></span><span class="range tc"></span><div class="bar"><span></span></div></div><div class="tools"><button type="button" tabindex="-1">↑</button></div>';
-          li.querySelector('.name').textContent = ex[0] + '（例）';
-          li.querySelector('.range').textContent = ex[3];
-          var bar = li.querySelector('.bar span');
-          bar.style.left = ex[1] * 100 + '%'; bar.style.width = (ex[2] - ex[1]) * 100 + '%';
+          li.innerHTML = '<span class="thumb"><span class="num">' + (i + 1) + '</span></span><span class="len">' + len + '</span><span class="tag">例</span><span class="grip" aria-hidden="true">⋮⋮</span>';
           timeline.append(li);
         });
         $('total').innerHTML = '合計 <b class="tc">00:00.00</b>';
@@ -215,47 +226,87 @@
         var li = document.createElement('li');
         li.className = 'clip' + (s.id === selected ? ' selected' : '');
 
-        var num = document.createElement('span');
-        num.className = 'num'; num.textContent = i + 1;
+        var thumb = document.createElement('button');
+        thumb.type = 'button'; thumb.className = 'thumb';
+        thumb.setAttribute('aria-label', (i + 1) + ' 番目のクリップを編集');
+        if (s.clip.thumb) {
+          var img = document.createElement('img');
+          img.src = s.clip.thumb; img.alt = '';
+          thumb.append(img);
+        }
+        var num = document.createElement('span'); num.className = 'num'; num.textContent = i + 1;
+        thumb.append(num);
+        thumb.addEventListener('click', function () { select(s.id); });
 
-        var body = document.createElement('button');
-        body.type = 'button'; body.className = 'body';
-        body.setAttribute('aria-label', (i + 1) + ' 番目のクリップを編集');
-        var name = document.createElement('span'); name.className = 'name'; name.textContent = s.clip.name;
-        var range = document.createElement('span'); range.className = 'range tc';
-        range.textContent = tc(s.start) + ' – ' + tc(s.end) + '（' + tc(s.end - s.start) + '）';
-        var bar = document.createElement('div'); bar.className = 'bar';
-        var fill = document.createElement('span');
-        fill.style.left = (s.start / s.clip.duration * 100) + '%';
-        fill.style.width = (Math.max(0, s.end - s.start) / s.clip.duration * 100) + '%';
-        bar.append(fill);
-        body.append(name, range, bar);
-        body.addEventListener('click', function () { select(s.id); });
+        var len = document.createElement('button');
+        len.type = 'button'; len.className = 'len';
+        len.textContent = tc(s.end - s.start);
+        len.setAttribute('aria-label', (i + 1) + ' 番目のクリップを編集（長さ ' + tc(s.end - s.start) + '）');
+        len.addEventListener('click', function () { select(s.id); });
 
-        var tools = document.createElement('div'); tools.className = 'tools';
-        tools.append(
-          tool('↑', '前へ移動', i === 0, function () { move(i, -1); }),
-          tool('↓', '後ろへ移動', i === segs.length - 1, function () { move(i, 1); }),
-          tool('削除', 'このクリップを削除', false, function () { remove(s.id); })
-        );
-        li.append(num, body, tools);
+        var del = document.createElement('button');
+        del.type = 'button'; del.className = 'del'; del.textContent = '✕';
+        del.setAttribute('aria-label', (i + 1) + ' 番目のクリップを削除');
+        del.addEventListener('click', function () { remove(s.id); });
+
+        var grip = document.createElement('button');
+        grip.type = 'button'; grip.className = 'grip'; grip.textContent = '⋮⋮';
+        grip.setAttribute('aria-label', '押したまま上下に動かして並べ替え');
+        grip.addEventListener('pointerdown', function (ev) { startDrag(ev, li, i); });
+
+        li.append(thumb, len, del, grip);
         timeline.append(li);
       });
       $('total').innerHTML = '合計 <b class="tc">' + tc(total) + '</b>';
     }
 
-    function tool(label, aria, disabled, fn) {
-      var b = document.createElement('button');
-      b.type = 'button'; b.textContent = label; b.setAttribute('aria-label', aria); b.disabled = disabled;
-      b.addEventListener('click', fn);
-      return b;
-    }
+    // ---------- 指でつかんで並べ替え ----------
+    function startDrag(ev, li, index) {
+      ev.preventDefault();
+      var grip = ev.currentTarget;
+      var rows = Array.prototype.slice.call(timeline.children);
+      var tops = rows.map(function (r) { return r.getBoundingClientRect().top + window.scrollY; });
+      var heights = rows.map(function (r) { return r.getBoundingClientRect().height; });
+      var step = heights[index] + 8;
+      var startY = ev.pageY;
+      var target = index;
+      try { grip.setPointerCapture(ev.pointerId); } catch (e) { /* 古いブラウザ */ }
+      li.classList.add('dragging');
 
-    function move(i, d) {
-      var j = i + d;
-      if (j < 0 || j >= segs.length) return;
-      var t = segs[i]; segs[i] = segs[j]; segs[j] = t;
-      invalidate(); renderTimeline(); renderEditor();
+      function onMove(e) {
+        if (e.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
+        else if (e.clientY < 60) window.scrollBy(0, -12);
+        var dy = e.pageY - startY;
+        li.style.transform = 'translateY(' + dy + 'px)';
+        var center = tops[index] + heights[index] / 2 + dy;
+        target = 0;
+        for (var j = 0; j < rows.length; j++) {
+          if (j !== index && tops[j] + heights[j] / 2 < center) target++;
+        }
+        rows.forEach(function (r, j) {
+          if (j === index) return;
+          var shift = 0;
+          if (j > index && j <= target) shift = -step;
+          if (j < index && j >= target) shift = step;
+          r.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+        });
+      }
+      function onUp() {
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onUp);
+        grip.removeEventListener('pointercancel', onUp);
+        rows.forEach(function (r) { r.style.transform = ''; });
+        li.classList.remove('dragging');
+        if (target !== index) {
+          var moved = segs.splice(index, 1)[0];
+          segs.splice(target, 0, moved);
+          invalidate(); renderEditor();
+        }
+        renderTimeline();
+      }
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onUp);
+      grip.addEventListener('pointercancel', onUp);
     }
 
     function remove(id) {
@@ -361,6 +412,7 @@
         try {
           var clip = await E.openClip(files[i]);
           clip.url = URL.createObjectURL(files[i]);
+          E.thumbnail(clip, 160).then(function (c) { return function (url) { if (url) { c.thumb = url; renderTimeline(); } }; }(clip));
           var s = { id: nextId++, clip: clip, start: clip.firstTime, end: clip.duration };
           segs.push(s);
           if (selected === null) selected = s.id;
@@ -382,7 +434,15 @@
       btn.disabled = true;
       say(st, '書き出しています…');
       try {
-        var r = await E.render(segs.map(function (s) { return { clip: s.clip, start: s.start, end: s.end }; }), { mute: $('mute').checked });
+        var list = segs.map(function (s) { return { clip: s.clip, start: s.start, end: s.end }; });
+        var r;
+        if (E.incompatibility(list)) {
+          var msg = '向きや解像度が違うクリップがあるので、縦長（1080×1920）に作り直しています… ';
+          say(st, msg + '0%');
+          r = await E.reencode(list, { mute: $('mute').checked, onProgress: function (f) { say(st, msg + Math.round(f * 100) + '%'); } });
+        } else {
+          r = await E.render(list, { mute: $('mute').checked });
+        }
         var d = new Date();
         var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' +
           String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
@@ -392,7 +452,8 @@
         $('result').hidden = false;
         var size = r.blob.size < 1048576 ? (r.blob.size / 1024).toFixed(0) + ' KB' : (r.blob.size / 1048576).toFixed(1) + ' MB';
         var note = r.audio === 'dropped' ? '（音声の形式がそろっていないか、音声のないクリップがあるため、音声なしで書き出しました）' : '';
-        say(st, '書き出しました：' + tc(r.duration) + '・' + size + note, r.audio === 'dropped' ? 'error' : 'ok');
+        var how = r.reencoded ? '（縦長に作り直し）' : '（画質そのまま）';
+        say(st, '書き出しました：' + tc(r.duration) + '・' + size + how + note, r.audio === 'dropped' ? 'error' : 'ok');
         say($('save-status'), '');
       } catch (e) {
         say(st, e && e.userFacing ? e.message : '書き出しに失敗しました。クリップを確認してもう一度試してください。', 'error');

@@ -35,7 +35,7 @@
   .thumb img { display: block; width: 96px; height: 96px; object-fit: cover; border-radius: 10px; background: var(--soft); }
   .thumb .px { display: block; font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
   .thumb button { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 16px; line-height: 28px; padding: 0; cursor: pointer; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .seg { display: grid; grid-template-columns: 1fr; gap: 8px; }
   .seg label { display: flex; flex-direction: column; gap: 2px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; min-width: 0; }
   .seg label:has(input:checked) { border-color: var(--accent); background: var(--soft); }
   .seg input { position: absolute; opacity: 0; pointer-events: none; }
@@ -77,6 +77,10 @@
   .facts div { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
   .facts dt { font-size: 0.74rem; color: var(--muted); }
   .facts dd { margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.98rem; }
+  .steps { margin: 0; padding: 12px 14px 12px 2.1em; background: var(--soft); border-radius: 12px; display: flex; flex-direction: column; gap: 4px; font-size: 0.88rem; }
+  .btns { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .sub { appearance: none; border: 1px solid var(--accent); border-radius: 12px; min-height: 48px; padding: 10px 16px; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+  .sub:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   .foot { margin: 0; color: var(--muted); font-size: 0.82rem; }
 </style>
 
@@ -102,18 +106,38 @@
   <section class="panel" aria-labelledby="h-way">
     <h2 id="h-way">3. 方法</h2>
     <div class="seg" role="radiogroup" aria-labelledby="h-way">
-      <label><input type="radio" name="way" id="way-ai" value="ai" checked><b>AI で復元</b><span>参考写真を使う・ネットが必要</span></label>
+      <label><input type="radio" name="way" id="way-app" value="app" checked><b>Gemini アプリで復元</b><span>参考写真を使う・Gemini の契約内で使える（追加料金なし）</span></label>
+      <label><input type="radio" name="way" id="way-ai" value="ai"><b>Gemini API で自動復元</b><span>参考写真を使う・API の料金が別にかかる</span></label>
       <label><input type="radio" name="way" id="way-local" value="local"><b>この端末で拡大</b><span>参考写真は使わない・オフライン可</span></label>
     </div>
 
-    <div id="opt-ai" class="panel" style="padding:0;border:0;gap:12px">
+    <div class="field" id="note-field">
+      <label for="ai-note">AI へのひとこと（任意）</label>
+      <textarea id="ai-note" placeholder="例：メガネはそのまま。肌は自然な感じで"></textarea>
+    </div>
+
+    <div id="opt-app" class="panel" style="padding:0;border:0;gap:12px">
+      <ol class="steps">
+        <li>「Gemini に送る」→ 共有シートで <b>Gemini</b> を選ぶ（出てこなければ Gemini アプリを開き、＋ボタンから同じ写真を添付）</li>
+        <li>Gemini の入力欄に指示文を<b>貼り付けて送信</b>（指示文はボタンを押したときにコピーされます）</li>
+        <li>できた画像を長押しして保存し、下の「Gemini の結果を読み込む」で元の写真と比べる</li>
+      </ol>
+      <div class="btns">
+        <button class="go" id="go-app" type="button" disabled>Gemini に送る</button>
+        <button class="sub" id="copy-prompt" type="button">指示文だけコピー</button>
+      </div>
+      <details>
+        <summary>指示文を見る</summary>
+        <div class="field"><label for="prompt-view">Gemini に貼り付ける文</label><textarea id="prompt-view" rows="9" readonly></textarea></div>
+      </details>
+      <label class="pick" for="app-result"><span>Gemini の結果を読み込む</span><input id="app-result" type="file" accept="image/*"></label>
+      <p class="note">Gemini アプリの画像は、元の写真と縦横比がずれることがあります。読み込むと元の比率に切りそろえます。</p>
+    </div>
+
+    <div id="opt-ai" class="panel" style="padding:0;border:0;gap:12px" hidden>
       <div class="row">
         <label for="ai-size">仕上がり</label>
         <select id="ai-size"><option value="2K">2K（長辺 約2000px）</option><option value="4K">4K（長辺 約4000px）</option></select>
-      </div>
-      <div class="field">
-        <label for="ai-note">AI へのひとこと（任意）</label>
-        <textarea id="ai-note" placeholder="例：メガネはそのまま。肌は自然な感じで"></textarea>
       </div>
       <details id="ai-settings">
         <summary>Gemini の設定</summary>
@@ -128,7 +152,7 @@
             <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image（速い・安い）</option>
           </select>
         </div>
-        <p class="note" style="margin-top:8px">キーは <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で作れます。画像の生成は有料（1 枚あたり数十円程度）です。</p>
+        <p class="note" style="margin-top:8px">キーは <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で作れます。API の画像生成は Gemini アプリの契約（Google AI Pro など）とは別の料金で、1 枚あたり数十円程度です。</p>
       </details>
       <p class="note">高画質にしたい写真と参考写真を Google の Gemini に送って処理します。AI は細部を描き足すため、本人と細かな違いが出ることがあります。</p>
     </div>
@@ -165,7 +189,7 @@
     <button class="save" id="save" type="button">写真を保存</button>
   </section>
 
-  <p class="foot">「この端末で拡大」は、すべてこの iPhone の中で処理します。「AI で復元」を選んだときだけ、写真を Google に送ります。</p>
+  <p class="foot">「この端末で拡大」は、すべてこの iPhone の中で処理します。Gemini を使う方法では、写真を Google に送ります。</p>
 </div>
 
 <script src="vendor/tf.min.js"></script>
@@ -182,7 +206,7 @@
 
   function say(text, kind) { statusEl.textContent = text; statusEl.className = 'status' + (kind ? ' ' + kind : ''); }
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
-  function way() { return $('way-ai').checked ? 'ai' : 'local'; }
+  function way() { return $('way-app').checked ? 'app' : $('way-ai').checked ? 'ai' : 'local'; }
 
   // 設定は端末内に覚えておく
   $('ai-key').value = store('pu.key') || '';
@@ -190,6 +214,7 @@
   if (store('pu.size')) $('ai-size').value = store('pu.size');
   if (!$('ai-key').value) $('ai-settings').open = true;
   $('ai-key').addEventListener('change', function () { store('pu.key', $('ai-key').value.trim()); });
+  $('ai-note').addEventListener('input', function () { if (low) $('prompt-view').value = appPrompt(); });
   $('ai-model').addEventListener('change', function () { store('pu.model', $('ai-model').value); });
   $('ai-size').addEventListener('change', function () { store('pu.size', $('ai-size').value); });
 
@@ -224,11 +249,17 @@
       rt.append(thumb(r, function () { URL.revokeObjectURL(r.url); refs.splice(i, 1); render(); }));
     });
     $('opt-ai').hidden = way() !== 'ai';
+    $('opt-app').hidden = way() !== 'app';
+    $('note-field').hidden = way() === 'local';
+    goBtn.hidden = way() === 'app';
+    $('go-app').disabled = !low;
+    $('prompt-view').value = low ? appPrompt() : '1 の写真を選ぶと、ここに指示文ができます。';
     $('opt-local').hidden = way() !== 'local';
     goBtn.disabled = busy || !low;
     if (!busy) {
       if (!low) say('まず 1 の写真を選んでください。');
-      else if (way() === 'ai' && !refs.length) say('参考写真なしでも AI 復元できますが、2 で同じ人の写真を足すと顔立ちが正確になります。');
+      else if (way() !== 'local' && !refs.length) say('参考写真なしでも AI 復元できますが、2 で同じ人の写真を足すと顔立ちが正確になります。');
+      else if (way() === 'app') say('準備ができました。「Gemini に送る」を押してください。');
       else say('準備ができました。「高画質にする」を押してください。');
     }
   }
@@ -327,14 +358,77 @@
     var bin = atob(img.data), arr = new Uint8Array(bin.length);
     for (var j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j);
     var out = await loadImage(new Blob([arr], { type: img.mimeType || img.mime_type || 'image/png' }));
-    // AI の出力の縦横比が元とずれたときは、中央で元の比率に切りそろえる
+    var c = cropToLow(out);
+    URL.revokeObjectURL(out.url);
+    return { canvas: c, suffix: '_AI復元' };
+  }
+
+  // AI の出力の縦横比が元とずれたときは、中央で元の比率に切りそろえる
+  function cropToLow(out) {
     var ar = low.w / low.h, w = out.w, h = out.h;
     if (Math.abs(Math.log((w / h) / ar)) > 0.002) { if (w / h > ar) w = Math.round(h * ar); else h = Math.round(w / ar); }
     var c = canvasOf(w, h);
     c.getContext('2d').drawImage(out.img, (out.w - w) / 2, (out.h - h) / 2, w, h, 0, 0, w, h);
-    URL.revokeObjectURL(out.url);
-    return { canvas: c, suffix: '_AI復元' };
+    return c;
   }
+
+  // ---- Gemini アプリ用：写真を共有シートで渡し、指示文はクリップボードへ ----
+  function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+  function appPrompt() {
+    var g = gcd(low.w, low.h), rw = low.w / g, rh = low.h / g;
+    var ratio = (rw <= 50 && rh <= 50) ? rw + ':' + rh : nearestRatio(low.w, low.h);
+    var t = 'いちばん解像度の低い写真（' + low.w + '×' + low.h + '）は、ぼやけた低解像度の人物写真です。これを高解像度で鮮明な写真に復元した画像を作ってください。\n' +
+      '・構図、切り取り、ポーズ、顔の向き、表情、髪型、服、アクセサリー、背景、光の当たり方、色は元の写真とまったく同じにしてください。何かを足したり、消したり、動かしたりしないでください。\n' +
+      (refs.length ? '・ほかの ' + refs.length + ' 枚は、同じ人物を別のときに撮った高解像度の写真です。目、まぶた、眉、鼻、唇、歯、肌の質感、ほくろ、髪の毛などの細部と顔立ちを本人と一致させるための参考にだけ使ってください。参考写真のポーズ、表情、メイク、光、背景はまねしないでください。\n' : '') +
+      '・肌をなめらかにしたり美化したりせず、自然な写真の質感にしてください。\n' +
+      '・縦横比は元の写真と同じ ' + ratio + ' にして、できるだけ高い解像度で出力してください。\n' +
+      '・出力は復元した画像 1 枚だけにしてください。';
+    var note = $('ai-note').value.trim();
+    return note ? t + '\n・追加の希望：' + note : t;
+  }
+
+  function copyText(text) {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; }); } catch (e) {}
+    return Promise.resolve(false);
+  }
+
+  $('copy-prompt').addEventListener('click', async function () {
+    if (!low) { say('まず 1 の写真を選んでください。', 'error'); return; }
+    if (await copyText(appPrompt())) say('指示文をコピーしました。Gemini の入力欄に貼り付けてください。', 'ok');
+    else { $('prompt-view').closest('details').open = true; $('prompt-view').select(); say('コピーできませんでした。「指示文を見る」の文を長押しでコピーしてください。', 'error'); }
+  });
+
+  $('go-app').addEventListener('click', async function () {
+    if (!low) return;
+    // コピーは共有シートを開く前に（ボタンを押した直後でないと許可されない）
+    var copied = copyText(appPrompt());
+    var files = [low.file].concat(refs.map(function (r) { return r.file; }));
+    var can = false;
+    try { can = !!(navigator.canShare && navigator.canShare({ files: files })); } catch (e) {}
+    if (!can) {
+      $('prompt-view').closest('details').open = true;
+      say((await copied ? '指示文をコピーしました。' : '') + 'この画面では共有シートが使えません。Gemini アプリで写真を添付し、指示文を貼り付けてください。', 'error');
+      return;
+    }
+    try {
+      await navigator.share({ files: files });
+      say((await copied ? '指示文はコピー済みです。' : '「指示文だけコピー」で指示文をコピーしてください。') + 'Gemini で貼り付けて送信し、できた画像を保存したら「Gemini の結果を読み込む」を押してください。', 'ok');
+    } catch (e) {
+      if (e && e.name === 'AbortError') say('共有をキャンセルしました。');
+      else say('共有できませんでした（' + (e && e.message || '不明なエラー') + '）。', 'error');
+    }
+  });
+
+  $('app-result').addEventListener('change', async function (e) {
+    var f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f || !low) { if (f) say('先に 1 の写真を選んでください。', 'error'); return; }
+    try {
+      var out = await loadImage(f);
+      var c = cropToLow(out);
+      URL.revokeObjectURL(out.url);
+      await showResult({ canvas: c, suffix: '_Gemini復元' });
+    } catch (err) { say(err.message || '読み込めませんでした。', 'error'); }
+  });
 
   // ---- 端末内 ESRGAN（タイルに分けて少しずつ処理し、メモリを抑える）----
   var models = {};
@@ -390,19 +484,7 @@
     if (!low || busy) return;
     busy = true; goBtn.disabled = true; prog.hidden = false;
     try {
-      var r = way() === 'ai' ? await runAI() : await runLocal();
-      say('画像を仕上げています…');
-      var blob = await toBlob(r.canvas, 'image/png');
-      if (result) URL.revokeObjectURL(result.url);
-      var base = (low.file.name || 'photo').replace(/\.[^.]+$/, '') || 'photo';
-      result = { blob: blob, name: base + r.suffix + '.png', url: URL.createObjectURL(blob), w: r.canvas.width, h: r.canvas.height };
-      $('after-img').src = result.url;
-      $('before-img').src = low.url;
-      $('px-before').textContent = low.w + '×' + low.h;
-      $('px-after').textContent = result.w + '×' + result.h;
-      $('result').hidden = false;
-      say('できました。スライダーで元の写真と比べられます。', 'ok');
-      $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      await showResult(way() === 'ai' ? await runAI() : await runLocal());
     } catch (e) {
       console.error(e);
       say(e && e.userFacing ? e.message : '処理できませんでした（' + (e && e.message || '不明なエラー') + '）。写真を小さくするか、倍率を下げて試してください。', 'error');
@@ -410,6 +492,21 @@
       busy = false; prog.hidden = true; prog.value = 0; goBtn.disabled = !low;
     }
   });
+
+  async function showResult(r) {
+    say('画像を仕上げています…');
+    var blob = await toBlob(r.canvas, 'image/png');
+    if (result) URL.revokeObjectURL(result.url);
+    var base = (low.file.name || 'photo').replace(/\.[^.]+$/, '') || 'photo';
+    result = { blob: blob, name: base + r.suffix + '.png', url: URL.createObjectURL(blob), w: r.canvas.width, h: r.canvas.height };
+    $('after-img').src = result.url;
+    $('before-img').src = low.url;
+    $('px-before').textContent = low.w + '×' + low.h;
+    $('px-after').textContent = result.w + '×' + result.h;
+    $('result').hidden = false;
+    say('できました。スライダーで元の写真と比べられます。', 'ok');
+    $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   // 比べるスライダー：画像の上を指でなぞっても動かせる
   var cmp = $('compare'), cut = $('cut');

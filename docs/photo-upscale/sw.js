@@ -1,6 +1,6 @@
 // オフライン用：アプリのファイル（端末内 AI のモデルを含む）を端末に保存し、ネットが無くても開けるようにする。
 // 表示はいつも保存済みのものを先に出し、つながっていれば裏で最新版に入れ替える。Gemini への通信（別サイト）は対象外。
-var CACHE = 'photo-upscale-6606cb1667a8';
+var CACHE = 'photo-upscale-7c8fbe8ed817';
 var FILES = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png',
   './vendor/tf.min.js', './models/x2/model.json', './models/x2/group1-shard1of1.bin',
   './models/x4/model.json', './models/x4/group1-shard1of1.bin'];
